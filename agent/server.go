@@ -8,9 +8,9 @@ import (
 
 	"github.com/go-redis/redis/v8"
 
-	libs "simple_game/game/libs"
-	pkg "simple_game/game/pkg"
-	"simple_game/game/tunnel"
+	"simple_game/game/pkg/codec"
+	"simple_game/game/pkg/logger"
+	"simple_game/game/pkg/network"
 )
 
 // handshakeMsg 客户端握手消息（spec 5.1b）。
@@ -35,25 +35,25 @@ func startAgent(listeners []listenerCfg, redisCfg redisCfg) {
 	})
 
 	for _, lc := range listeners {
-		l, err := pkg.NewListener(lc.Network, lc.Addr, lc.Port)
+		l, err := network.NewListener(lc.Network, lc.Addr, lc.Port)
 		if err != nil {
-			pkg.ERROR("agent listener create failed:", lc.Network, lc.Addr, lc.Port, err)
+			logger.ERROR("agent listener create failed:", lc.Network, lc.Addr, lc.Port, err)
 			continue
 		}
-		pkg.INFO("agent listener start:", lc.Network, l.Addr())
+		logger.INFO("agent listener start:", lc.Network, l.Addr())
 		go serveListener(l, rdb)
 	}
 }
 
 // serveListener accept 客户端连接并为每个连接创建 Session。
-func serveListener(l pkg.Listener, rdb *redis.Client) {
+func serveListener(l network.Listener, rdb *redis.Client) {
 	for {
 		conn, err := l.Accept()
 		if err != nil {
 			if strings.Contains(err.Error(), "closed") {
 				return
 			}
-			pkg.ERROR("agent accept error:", err)
+			logger.ERROR("agent accept error:", err)
 			continue
 		}
 		go handleClient(conn, rdb)
@@ -61,18 +61,18 @@ func serveListener(l pkg.Listener, rdb *redis.Client) {
 }
 
 // handleClient 处理单个客户端连接：握手 → 建连 Game → 双向转发。
-func handleClient(clientConn pkg.NetConn, rdb *redis.Client) {
+func handleClient(clientConn network.NetConn, rdb *redis.Client) {
 	// 1. 读握手消息
 	data, err := clientConn.ReadMessage()
 	if err != nil {
-		pkg.ERROR("read handshake from client failed:", err)
+		logger.ERROR("read handshake from client failed:", err)
 		_ = clientConn.Close()
 		return
 	}
 
 	hs := &handshakeMsg{}
 	if err := json.Unmarshal(data, hs); err != nil {
-		pkg.ERROR("parse handshake failed:", err)
+		logger.ERROR("parse handshake failed:", err)
 		_ = clientConn.Close()
 		return
 	}
@@ -80,7 +80,7 @@ func handleClient(clientConn pkg.NetConn, rdb *redis.Client) {
 	// 2. 从 token 中提取 player_name（不验证签名 — 由 Game 验证）
 	playerName := extractSubFromToken(hs.Token)
 	if playerName == "" {
-		pkg.ERROR("extract player name from token failed")
+		logger.ERROR("extract player name from token failed")
 		_ = clientConn.Close()
 		return
 	}
@@ -88,21 +88,21 @@ func handleClient(clientConn pkg.NetConn, rdb *redis.Client) {
 	// 3. 查 Redis 获取 game_addr
 	val, err := rdb.Get(rdb.Context(), "player:"+playerName).Result()
 	if err != nil {
-		pkg.ERROR("redis get player info failed:", err)
+		logger.ERROR("redis get player info failed:", err)
 		_ = clientConn.Close()
 		return
 	}
 	reg := &playerReg{}
 	if err := json.Unmarshal([]byte(val), reg); err != nil {
-		pkg.ERROR("parse player reg failed:", err)
+		logger.ERROR("parse player reg failed:", err)
 		_ = clientConn.Close()
 		return
 	}
 
 	// 4. 建连 Game
-	gameConn, err := pkg.Dial("tcp", reg.GameAddr)
+	gameConn, err := network.Dial("tcp", reg.GameAddr)
 	if err != nil {
-		pkg.ERROR("dial game failed:", reg.GameAddr, err)
+		logger.ERROR("dial game failed:", reg.GameAddr, err)
 		_ = clientConn.WriteMessage([]byte(`{"error":"game unavailable"}`))
 		_ = clientConn.Close()
 		return
@@ -114,13 +114,13 @@ func handleClient(clientConn pkg.NetConn, rdb *redis.Client) {
 	// 6. 等待 Game 握手确认
 	resp, err := gameConn.ReadMessage()
 	if err != nil {
-		pkg.ERROR("read game handshake response failed:", err)
+		logger.ERROR("read game handshake response failed:", err)
 		_ = clientConn.Close()
 		_ = gameConn.Close()
 		return
 	}
 	// 转发握手结果给客户端
-	tm := tunnel.UnpackTunnel(resp)
+	tm := codec.UnpackTunnel(resp)
 	var clientResp []byte
 	if tm != nil && tm.Name == "HandshakeOk" {
 		clientResp = []byte(`{"status":"ok"}`)
@@ -156,11 +156,11 @@ func clientToGame(sess *Session) {
 			return
 		}
 		// 解析 PacketMsg 提取 name/data，注入 tunnel_id
-		codePack := libs.DeCodePack(data)
+		codePack := codec.DeCodePack(data)
 		if codePack == nil {
 			continue
 		}
-		wrapped := tunnel.PackTunnelRaw(codePack.Name, codePack.Data, sess.TunnelID)
+		wrapped := codec.PackTunnelRaw(codePack.Name, codePack.Data, sess.TunnelID)
 		if err := sess.GameConn.WriteMessage(wrapped); err != nil {
 			_ = sess.ClientConn.Close()
 			return
@@ -177,12 +177,12 @@ func gameToClient(sess *Session) {
 			return
 		}
 		// 解包 TunnelMsg 获取原始 PacketMsg
-		tm := tunnel.UnpackTunnel(data)
+		tm := codec.UnpackTunnel(data)
 		if tm == nil {
 			continue
 		}
 		// 还原为 PacketMsg JSON 发送给客户端
-		raw := libs.EnCodePack(&libs.PacketMsg{Name: tm.Name, Data: tm.Data})
+		raw := codec.EnCodePack(&codec.PacketMsg{Name: tm.Name, Data: tm.Data})
 		if err := sess.ClientConn.WriteMessage(raw); err != nil {
 			_ = sess.GameConn.Close()
 			return

@@ -1,13 +1,14 @@
-package engine
+package rpc
 
 import (
 	"context"
 	"fmt"
 	"net"
-	pt2 "simple_game/game/api/protos/pt"
-	"simple_game/game/pkg"
 
 	"google.golang.org/grpc"
+
+	pt2 "simple_game/game/api/protos/pt"
+	"simple_game/game/pkg/logger"
 )
 
 // server gRPC服务器结构体，实现了Hello服务接口
@@ -39,11 +40,11 @@ func StartGRPC() {
 		_ = listen.Close()
 	}()
 
-	pkg.INFO("grpc server start port: ", 9901)
+	logger.INFO("grpc server start port: ", 9901)
 	// 启动gRPC服务
 	err = s.Serve(listen)
 	if err != nil {
-		pkg.ERROR("failed to serve", err)
+		logger.ERROR("failed to serve", err)
 		return
 	}
 }

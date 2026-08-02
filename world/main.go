@@ -11,7 +11,8 @@ import (
 	"github.com/go-redis/redis/v8"
 	"gopkg.in/yaml.v3"
 
-	"simple_game/game/pkg"
+	"simple_game/game/pkg/logger"
+	"simple_game/game/pkg/mysql"
 )
 
 type worldConfig struct {
@@ -50,15 +51,15 @@ func main() {
 	}
 
 	// 日志
-	pkg.StartLog()
+	logger.StartLog()
 	if cfg.SaveLog {
-		_ = pkg.InitLogFile()
+		_ = logger.InitLogFile()
 	}
 
 	// DB / Redis
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s",
 		cfg.MySql.User, cfg.MySql.PassWord, cfg.MySql.Addr, cfg.MySql.Port, cfg.MySql.DBName)
-	pkg.MysqlStart(dsn)
+	mysql.MysqlStart(dsn)
 
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     cfg.Redis.Addr,
@@ -74,7 +75,7 @@ func main() {
 
 	// 启动
 	addr := fmt.Sprintf("%s:%s", cfg.Http.Addr, cfg.Http.Port)
-	go startWorld(addr, pkg.DB, rdb, cfg.AgentAddr,
+	go startWorld(addr, mysql.DB, rdb, cfg.AgentAddr,
 		fmt.Sprintf("%s:%s", cfg.Http.Addr, "9900"), // gameAddr 默认
 		cfg.TokenSecret, tokenExpire)
 

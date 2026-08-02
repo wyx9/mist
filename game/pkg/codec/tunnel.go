@@ -1,10 +1,9 @@
 // game/tunnel/tunnel.go
 // TunnelMsg 在 PacketMsg 外层包裹路由标识，用于 Agent↔Game 之间的消息转发。
-package tunnel
+package codec
 
 import (
 	"encoding/json"
-	"simple_game/game/libs"
 )
 
 // TunnelMsg 带路由标识的消息结构。
@@ -16,8 +15,7 @@ type TunnelMsg struct {
 }
 
 // PackTunnel 将 PacketMsg 和 tunnelID 打包为 JSON 字节。
-// 如果 msg 已经是 *libs.PacketMsg，直接内联字段；否则 Name 设为空。
-func PackTunnel(msg *libs.PacketMsg, tunnelID string) []byte {
+func PackTunnel(msg *PacketMsg, tunnelID string) []byte {
 	tm := &TunnelMsg{
 		Name:     msg.Name,
 		Data:     msg.Data,

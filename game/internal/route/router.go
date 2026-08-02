@@ -1,9 +1,11 @@
-package routes
+package route
 
 import (
 	"errors"
+
 	"google.golang.org/protobuf/proto"
-	"simple_game/game/pkg"
+
+	"simple_game/game/pkg/logger"
 )
 
 type Handler func(ctx interface{}, req any) proto.Message
@@ -17,7 +19,7 @@ func AddRoute(protocol string, handler Handler) {
 func Route(ctx interface{}, name string, msg any) (Handler, proto.Message, error) {
 	defer func() {
 		if err := recover(); err != nil {
-			pkg.ERROR("HandleRequest error:", err)
+			logger.ERROR("HandleRequest error:", err)
 		}
 	}()
 	handler, ok := routes[name]

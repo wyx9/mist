@@ -1,8 +1,11 @@
-package pkg
+package redis
 
 import (
 	"context"
+
 	"github.com/go-redis/redis/v8"
+
+	"simple_game/game/pkg/logger"
 )
 
 //https://redis.uptrace.dev/guide/go-redis.html#installation
@@ -22,8 +25,8 @@ func RedisStart(addr, password string, db int) {
 	RCtx = context.Background()
 	result, _ := RedisClient.Ping(RCtx).Result()
 	if result == "PONG" {
-		INFO("redis server start suc")
+		logger.INFO("redis server start suc")
 	} else {
-		ERROR("redis server start fail")
+		logger.ERROR("redis server start fail")
 	}
 }

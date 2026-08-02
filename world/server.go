@@ -7,7 +7,8 @@ import (
 
 	"github.com/go-redis/redis/v8"
 	"github.com/jmoiron/sqlx"
-	"simple_game/game/pkg"
+
+	"simple_game/game/pkg/logger"
 )
 
 // startWorld 启动 World HTTP 服务。
@@ -27,8 +28,8 @@ func startWorld(addr string, db *sqlx.DB, rdb *redis.Client, agentAddr, gameAddr
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	pkg.INFO("world http server starting on", addr)
+	logger.INFO("world http server starting on", addr)
 	if err := http.ListenAndServe(addr, nil); err != nil {
-		pkg.ERROR("world http server failed:", err)
+		logger.ERROR("world http server failed:", err)
 	}
 }

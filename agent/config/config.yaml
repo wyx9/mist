@@ -11,5 +11,5 @@ GameAddr: "127.0.0.1:9900"
 
 Redis:
   Addr: "127.0.0.1:6379"
-  PassWord: ""
+  PassWord: "123456"
   DB: 4

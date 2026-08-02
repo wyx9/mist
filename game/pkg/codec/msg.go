@@ -1,4 +1,4 @@
-package pkg
+package codec
 
 import (
 	"encoding/binary"

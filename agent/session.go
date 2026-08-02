@@ -3,14 +3,15 @@ package main
 
 import (
 	"sync"
-	"simple_game/game/pkg"
+
+	"simple_game/game/pkg/network"
 )
 
 // Session 客户端连接 ↔ Game 连接的映射。
 type Session struct {
 	TunnelID   string
-	ClientConn pkg.NetConn
-	GameConn   pkg.NetConn
+	ClientConn network.NetConn
+	GameConn   network.NetConn
 }
 
 // sessionMap 全局会话表。

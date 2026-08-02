@@ -1,4 +1,4 @@
-package pkg
+package network
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"simple_game/game/pkg/logger"
 	"nhooyr.io/websocket"
 )
 
@@ -98,7 +99,7 @@ func newWSListener(addr, port string) (*wsListener, error) {
 
 	go func() {
 		if err := l.server.Serve(ln); err != nil && err.Error() != "http: Server closed" {
-			ERROR("ws listener serve error:", err)
+			logger.ERROR("ws listener serve error:", err)
 		}
 	}()
 
@@ -110,7 +111,7 @@ func (l *wsListener) handleWS(w http.ResponseWriter, r *http.Request) {
 	// InsecureSkipVerify: 开发/测试阶段允许任意 Origin 连接，生产环境应改为 OriginPatterns 白名单
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {
-		ERROR("websocket accept failed:", err)
+		logger.ERROR("websocket accept failed:", err)
 		return
 	}
 
@@ -123,7 +124,7 @@ func (l *wsListener) handleWS(w http.ResponseWriter, r *http.Request) {
 	case l.connChan <- conn:
 	default:
 		// 队列满则拒绝连接并记录日志
-		ERROR("ws listener accept queue full, rejecting connection from", r.RemoteAddr)
+		logger.ERROR("ws listener accept queue full, rejecting connection from", r.RemoteAddr)
 		_ = c.Close(websocket.StatusTryAgainLater, "server busy")
 	}
 }

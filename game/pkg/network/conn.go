@@ -1,9 +1,11 @@
-package pkg
+package network
 
 import (
 	"fmt"
 	"net"
 	"time"
+
+	"simple_game/game/pkg/codec"
 )
 
 // NetConn 统一连接接口，屏蔽不同协议（TCP/WebSocket/KCP...）的读写差异。
@@ -55,7 +57,7 @@ type tcpConn struct {
 }
 
 func (c *tcpConn) ReadMessage() ([]byte, error) {
-	return RecvData(c.conn)
+	return codec.RecvData(c.conn)
 }
 
 func (c *tcpConn) WriteMessage(data []byte) error {
@@ -63,7 +65,7 @@ func (c *tcpConn) WriteMessage(data []byte) error {
 		_ = c.conn.SetWriteDeadline(c.writeDeadline)
 		defer c.conn.SetWriteDeadline(time.Time{})
 	}
-	return SendData(c.conn, data)
+	return codec.SendData(c.conn, data)
 }
 
 func (c *tcpConn) RemoteAddr() string {

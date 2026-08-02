@@ -1,27 +1,31 @@
-// game/handle_msg.go
-package engine
+// internal/gameserver/message.go
+package gameserver
 
 import (
 	"errors"
-	"simple_game/game/libs"
-	"simple_game/game/pkg"
-	"simple_game/game/tunnel"
+
+	"simple_game/game/pkg/codec"
+	"simple_game/game/pkg/logger"
+	"simple_game/game/pkg/network"
 )
 
-// handleMsg 处理来自 Agent 的单条消息。
-// msg 是 TunnelMsg JSON 原始字节，conn 是该 Agent 隧道连接。
-func handleMsg(conn pkg.NetConn, msg []byte, tunnelID string) error {
-	tm := tunnel.UnpackTunnel(msg)
+// handleMsg 解包 Agent 消息并投递到 worker pool，由 worker 转发到 Actor 系统。
+func (s *Server) handleMsg(conn network.NetConn, msg []byte, tunnelID string) error {
+	tm := codec.UnpackTunnel(msg)
 	if tm == nil {
 		return errors.New("unpack tunnel msg error")
 	}
 
-	// 还原为 PacketMsg 交给 Actor 系统处理
-	codePack := &libs.PacketMsg{
+	codePack := &codec.PacketMsg{
 		Name: tm.Name,
 		Data: tm.Data,
 	}
 
-	// 已认证的消息直接路由到 Actor
-	return ActorManner.CastMsg(tunnelID, libs.EnCodePack(codePack))
+	// 通过 Server.Dispatch 投递到 worker pool，保证同一玩家消息有序
+	s.Dispatch(tunnelID, func() {
+		if err := s.CastMsg(tunnelID, codec.EnCodePack(codePack)); err != nil {
+			logger.ERROR("CastMsg error:", err, "tunnelID:", tunnelID)
+		}
+	})
+	return nil
 }

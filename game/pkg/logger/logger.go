@@ -1,4 +1,4 @@
-package pkg
+package logger
 
 import (
 	"fmt"
@@ -62,7 +62,7 @@ func InitLogFile() error {
 
 func DEBUG(v ...interface{}) {
 	debugLogger.Print(v...)
-	sprintf := fmt.Sprintf("\033[33m[DEBUG] %s\033[0m", fmt.Sprintln(v...))
+	sprintf := fmt.Sprintf("\033[33m[DEBUG] %s\033[0m", fmt.Sprint(v...))
 	defer func() {
 		logger.Logs <- sprintf
 	}()
@@ -70,7 +70,7 @@ func DEBUG(v ...interface{}) {
 
 func INFO(v ...interface{}) {
 	infoLogger.Print(v...)
-	sprintf := fmt.Sprintf("\033[32m[INFO] %s\033[0m", fmt.Sprintln(v...))
+	sprintf := fmt.Sprintf("\033[32m[INFO] %s\033[0m", fmt.Sprint(v...))
 	defer func() {
 		logger.Logs <- sprintf
 	}()
@@ -78,7 +78,7 @@ func INFO(v ...interface{}) {
 
 func WARNING(v ...interface{}) {
 	warningLogger.Print(v...)
-	sprintf := fmt.Sprintf("\033[34m[WARNING] %s\033[0m", fmt.Sprintln(v...))
+	sprintf := fmt.Sprintf("\033[34m[WARNING] %s\033[0m", fmt.Sprint(v...))
 	defer func() {
 		logger.Logs <- sprintf
 	}()
@@ -86,7 +86,7 @@ func WARNING(v ...interface{}) {
 
 func ERROR(v ...interface{}) {
 	errorLogger.Print(v...)
-	sprintf := fmt.Sprintf("\033[31m[ERROR] %s\033[0m", fmt.Sprintln(v...))
+	sprintf := fmt.Sprintf("\033[31m[ERROR] %s\033[0m", fmt.Sprint(v...))
 	defer func() {
 		logger.Logs <- sprintf
 	}()
