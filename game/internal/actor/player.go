@@ -1,12 +1,15 @@
-package engine
+package actor
 
 import (
 	"encoding/json"
 	"fmt"
-	"simple_game/game/libs"
-	"simple_game/game/pkg"
-	"simple_game/game/routes"
 	"time"
+
+	"simple_game/game/internal/route"
+	"simple_game/game/pkg/codec"
+	"simple_game/game/pkg/logger"
+	"simple_game/game/pkg/network"
+	"simple_game/game/pkg/redis"
 )
 
 // Player 玩家Actor结构体，实现了IActor接口
@@ -14,7 +17,7 @@ type Player struct {
 	name       string      // 玩家名称
 	ip         string      // 玩家IP地址
 	ac         IActor      // Actor接口实现
-	conn       pkg.NetConn // 网络连接（协议无关）
+	conn       network.NetConn // 网络连接（协议无关）
 	PlayerData *PlayerData // 玩家数据
 }
 
@@ -29,10 +32,13 @@ func (p *Player) Start() {
 	p.loadPlayer() // 加载玩家数据
 }
 
+// Category 返回 Actor 类别标识。
+func (p *Player) Category() string { return "player" }
+
 // Stop 玩家Actor停止时的清理
 func (p *Player) Stop() {
 	// 持久化玩家数据
-	pkg.INFO("player stop ,player name :", p.name)
+	logger.INFO("player stop ,player name :", p.name)
 	p.persistence()
 }
 
@@ -46,21 +52,21 @@ func (p *Player) persistence() {
 	data := p.PlayerData
 	marshal, _ := json.Marshal(data)
 	key := p.PersistenceKey()
-	pkg.RedisClient.Set(pkg.RCtx, key, marshal, -1)
-	pkg.INFO("player persistence", p.name)
+	redis.RedisClient.Set(redis.RCtx, key, marshal, -1)
+	logger.INFO("player persistence", p.name)
 }
 
 // loadPlayer 从Redis加载玩家数据
 func (p *Player) loadPlayer() {
 	key := p.PersistenceKey()
-	cmd := pkg.RedisClient.Get(pkg.RCtx, key)
+	cmd := redis.RedisClient.Get(redis.RCtx, key)
 	if cmd.Val() == "" {
 		return
 	}
 	playerData := p.PlayerData
 
 	_ = json.Unmarshal([]byte(cmd.Val()), playerData)
-	pkg.INFO("player persistence", p.name)
+	logger.INFO("player persistence", p.name)
 }
 
 // Handler 处理接收到的消息
@@ -76,24 +82,24 @@ func (p *Player) HandlerByClient(msg interface{}) {
 		return
 	}
 	// 解码消息包
-	codePack := libs.DeCodePack(bytes)
+	codePack := codec.DeCodePack(bytes)
 	if codePack == nil {
 		return
 	}
 	// 路由处理消息
-	handler, res, err := routes.Route(p, codePack.Name, codePack.Data)
+	handler, res, err := route.Route(p, codePack.Name, codePack.Data)
 	if err != nil {
-		pkg.ERROR("handler is nil , ", handler)
+		logger.ERROR("handler is nil , ", handler)
 	} else {
-		pkg.DEBUG("req :", codePack.Name)
-		marshal := libs.Pack2Msg(res)
-		pkg.DEBUG("res :", string(marshal))
+		logger.DEBUG("req :", codePack.Name)
+		marshal := codec.Pack2Msg(res)
+		logger.DEBUG("res :", string(marshal))
 		_ = p.conn.WriteMessage(marshal)
 	}
 }
 
 // StartNewPlayerActor 创建并启动新的玩家Actor
-func StartNewPlayerActor(name string, conn pkg.NetConn) (*Player, error) {
+func StartNewPlayerActor(name string, conn network.NetConn) (*Player, error) {
 	playerActor := &Player{
 		name: name,
 		ip:   conn.RemoteAddr(),
@@ -103,6 +109,12 @@ func StartNewPlayerActor(name string, conn pkg.NetConn) (*Player, error) {
 			LastLoginAt: time.Now().Unix(),
 		},
 	}
-	_ = NewActorBase(name, playerActor, nil)
+	ab := NewActorBase(name, playerActor, nil)
+	if ab == nil {
+		return nil, fmt.Errorf("create actor base failed: %s", name)
+	}
+	if err := ActorManner.Add(ab); err != nil {
+		return nil, err
+	}
 	return playerActor, nil
 }

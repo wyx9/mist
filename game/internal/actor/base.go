@@ -1,11 +1,12 @@
-package engine
+package actor
 
 import (
 	"context"
 	"errors"
-	"simple_game/game/pkg"
 	"sync/atomic"
 	"time"
+
+	"simple_game/game/pkg/logger"
 )
 
 // IActor 定义了Actor的基本接口
@@ -14,6 +15,7 @@ type IActor interface {
 	Start()                              // Actor启动时的初始化
 	Stop()                               // Actor停止时的清理
 	Handler(msg interface{}) interface{} // 消息处理函数，处理接收到的消息并返回结果
+	Category() string                    // Actor类别标识: "player", "npc", "room" 等
 }
 
 // 定义错误常量
@@ -49,6 +51,12 @@ type ActorBase struct {
 	cancel  context.CancelFunc // 取消函数，用于取消上下文
 }
 
+// CallRequest 同步调用请求结构体
+type CallRequest struct {
+	Msg      interface{} // 请求消息
+	Response chan interface{} // 响应通道，用于接收处理结果
+}
+
 // isClosed 检查Actor是否已关闭
 func (ac *ActorBase) isClosed() bool {
 	return atomic.LoadInt32(&ac.closed) == 1
@@ -75,7 +83,7 @@ func (ac *ActorBase) loop() {
 		for {
 			select {
 			case <-ac.ctx.Done(): // 上下文取消时退出
-				pkg.INFO("Actor context canceled , name:", ac.name)
+				logger.INFO("Actor context canceled , name:", ac.name)
 				return
 
 			case req, ok := <-ac.request: // 处理请求消息
@@ -102,7 +110,7 @@ func (ac *ActorBase) loop() {
 				select {
 				case <-done:
 				case <-handleCtx.Done():
-					pkg.ERROR("message handling timed out for actor ,", ac.name)
+					logger.ERROR("message handling timed out for actor ,", ac.name)
 				}
 				cancel()
 			}
@@ -141,11 +149,6 @@ func NewActorBase(name string, callBack IActor, config *ActorConfig) *ActorBase 
 		ctx:     ctx,
 		cancel:  cancel,
 		config:  *config,
-	}
-
-	// 将Actor添加到管理器
-	if err := ActorManner.Add(ab); err != nil {
-		return nil
 	}
 
 	ab.loop() // 启动Actor的主循环
