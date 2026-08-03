@@ -3,22 +3,21 @@ package actor
 import (
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"simple_game/game/internal/route"
-	"simple_game/game/pkg/codec"
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/network"
+	"simple_game/game/pkg/protocol"
 	"simple_game/game/pkg/redis"
 )
 
 // Player 玩家Actor结构体，实现了IActor接口
 type Player struct {
-	name       string      // 玩家名称
-	ip         string      // 玩家IP地址
-	ac         IActor      // Actor接口实现
+	name       string          // 玩家名称
+	ip         string          // 玩家IP地址
+	ac         IActor          // Actor接口实现
 	conn       network.NetConn // 网络连接（协议无关）
-	PlayerData *PlayerData // 玩家数据
+	PlayerData *PlayerData     // 玩家数据
 }
 
 // PlayerData 玩家数据结构体，用于存储玩家的基本信息
@@ -70,9 +69,8 @@ func (p *Player) loadPlayer() {
 }
 
 // Handler 处理接收到的消息
-func (p *Player) Handler(msg interface{}) interface{} {
+func (p *Player) Handler(ctx *ActorContext, msg interface{}) {
 	p.HandlerByClient(msg)
-	return nil
 }
 
 // HandlerByClient 处理来自客户端的消息
@@ -81,40 +79,26 @@ func (p *Player) HandlerByClient(msg interface{}) {
 	if !ok {
 		return
 	}
-	// 解码消息包
-	codePack := codec.DeCodePack(bytes)
-	if codePack == nil {
+	// 解码业务帧：cmd + protobuf
+	cmd, body, err := protocol.DecodeFrame(bytes)
+	if err != nil {
+		logger.ERROR("decode frame error:", err)
 		return
 	}
 	// 路由处理消息
-	handler, res, err := route.Route(p, codePack.Name, codePack.Data)
+	resCmd, res, err := route.Route(p, cmd, body)
 	if err != nil {
-		logger.ERROR("handler is nil , ", handler)
-	} else {
-		logger.DEBUG("req :", codePack.Name)
-		marshal := codec.Pack2Msg(res)
-		logger.DEBUG("res :", string(marshal))
-		_ = p.conn.WriteMessage(marshal)
+		logger.ERROR("route error:", cmd, err)
+		return
 	}
-}
-
-// StartNewPlayerActor 创建并启动新的玩家Actor
-func StartNewPlayerActor(name string, conn network.NetConn) (*Player, error) {
-	playerActor := &Player{
-		name: name,
-		ip:   conn.RemoteAddr(),
-		conn: conn,
-		PlayerData: &PlayerData{
-			Name:        name,
-			LastLoginAt: time.Now().Unix(),
-		},
+	logger.DEBUG("req cmd :", cmd)
+	if res == nil {
+		return
 	}
-	ab := NewActorBase(name, playerActor, nil)
-	if ab == nil {
-		return nil, fmt.Errorf("create actor base failed: %s", name)
+	out, err := protocol.PackCmd(resCmd, res)
+	if err != nil {
+		logger.ERROR("pack response error:", err)
+		return
 	}
-	if err := ActorManner.Add(ab); err != nil {
-		return nil, err
-	}
-	return playerActor, nil
+	_ = p.conn.WriteMessage(out)
 }

@@ -12,13 +12,13 @@ type AllController struct {
 	BaseController
 }
 
-func LoginController(player interface{}, req *pt.LoginReq) *pt.LoginRes {
+func LoginController(ctx any, req *pt.LoginReq) proto.Message {
 	return &pt.LoginRes{
 		UUid: req.UUid,
 		Code: 0,
 	}
 }
 
-func TestController(player interface{}, req *pt.HeartReq) proto.Message {
+func TestController(ctx any, req *pt.HeartReq) proto.Message {
 	return &pt.HeartRes{Time: time.Now().Unix()}
 }

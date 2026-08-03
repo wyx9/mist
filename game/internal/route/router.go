@@ -2,36 +2,62 @@ package route
 
 import (
 	"errors"
+	"fmt"
+	"reflect"
 
 	"google.golang.org/protobuf/proto"
 
 	"simple_game/game/pkg/logger"
+	"simple_game/game/pkg/protocol"
 )
 
-type Handler func(ctx interface{}, req any) proto.Message
+// dispatchFunc 路由注册项：负责新建消息实例、反序列化并调用具体 handler。
+type dispatchFunc func(ctx any, data []byte) (proto.Message, error)
 
-var routes = map[string]Handler{}
-
-func AddRoute(protocol string, handler Handler) {
-	routes[protocol] = handler
+type routeEntry struct {
+	resCmd uint16
+	name   string
+	handle dispatchFunc
 }
 
-func Route(ctx interface{}, name string, msg any) (Handler, proto.Message, error) {
+var routes = map[uint16]routeEntry{}
+
+// Register 泛型注册入口：reqCmd 为请求命令号，响应命令号由 protocol.ReqRsp 绑定表决定。
+// handler 收到已反序列化、类型安全的 T；命令号重复注册会直接 panic。
+func Register[T proto.Message](reqCmd uint16, h func(ctx any, req T) proto.Message) {
+	var zero T
+	typ := reflect.TypeOf(zero).Elem()
+	if _, ok := routes[reqCmd]; ok {
+		panic(fmt.Sprintf("duplicate route cmd: %d", reqCmd))
+	}
+	routes[reqCmd] = routeEntry{
+		resCmd: protocol.RspCmd(reqCmd),
+		name:   typ.Name(),
+		handle: func(ctx any, data []byte) (proto.Message, error) {
+			req := reflect.New(typ).Interface().(T)
+			if err := proto.Unmarshal(data, req); err != nil {
+				return nil, err
+			}
+			return h(ctx, req), nil
+		},
+	}
+}
+
+// Route 按命令号分发，返回响应命令号与响应消息。
+func Route(ctx any, cmd uint16, data []byte) (resCmd uint16, res proto.Message, err error) {
 	defer func() {
-		if err := recover(); err != nil {
-			logger.ERROR("HandleRequest error:", err)
+		if r := recover(); r != nil {
+			logger.ERROR("HandleRequest error:", r)
+			err = fmt.Errorf("handler panic: %v", r)
 		}
 	}()
-	handler, ok := routes[name]
+	entry, ok := routes[cmd]
 	if !ok {
-		return nil, nil, errors.New("not found handler")
+		return 0, nil, errors.New("not found handler")
 	}
-	f, ok := ProtoBufFactory[name]
-	if !ok {
-		return nil, nil, errors.New("not found proto factory for: " + name)
+	res, err = entry.handle(ctx, data)
+	if err != nil {
+		return 0, nil, err
 	}
-	_ = proto.Unmarshal(msg.([]byte), f())
-	message := handler(ctx, f())
-	return handler, message, nil
-
+	return entry.resCmd, res, nil
 }

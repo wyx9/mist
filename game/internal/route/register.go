@@ -1,24 +1,12 @@
 package route
 
 import (
-	"google.golang.org/protobuf/proto"
-
-	"simple_game/game/api/protos/pt"
 	"simple_game/game/internal/controller"
+	"simple_game/game/pkg/protocol"
 )
 
+// RegisteredRoute 注册所有业务路由，新增协议在此加一行即可。
 func RegisteredRoute() {
-	allController := controller.AllController{}
-
-	AddRoute("LoginReq", func(ctx interface{}, req any) proto.Message {
-		player := allController.Ctx(ctx)
-		return controller.LoginController(player, req.(*pt.LoginReq))
-	})
-
-	// 测试
-	AddRoute("HeartReq", func(ctx interface{}, req any) proto.Message {
-		player := allController.Ctx(ctx)
-		return controller.TestController(player, req.(*pt.HeartReq))
-	})
-
+	Register(protocol.CmdLogin, controller.LoginController)
+	Register(protocol.CmdHeart, controller.TestController)
 }
