@@ -1,10 +1,12 @@
 package actor
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
 	"simple_game/game/pkg/logger"
+	"simple_game/game/pkg/network"
 )
 
 // categoryIndex 单个类别的索引结构。
@@ -18,9 +20,6 @@ type AManager struct {
 	categories sync.Map // categoryName(string) → *categoryIndex
 	mu         sync.RWMutex
 }
-
-// ActorManner 全局Actor管理器实例
-var ActorManner = &AManager{}
 
 // RegisterCategory 注册 Actor 类别。传入原型实例，通过 Category() 获取类别名。
 func (am *AManager) RegisterCategory(prototype IActor) {
@@ -75,6 +74,7 @@ func (am *AManager) removeFromCategories(ab *ActorBase) {
 
 // Add 添加 Actor 到管理器。自动按已注册类别建立索引。
 func (am *AManager) Add(ab *ActorBase) error {
+	ab.manager = am // 注入管理器引用，供 handler 内部 RPC 使用
 	am.actorMap.Store(ab.name, ab)
 	am.addToCategories(ab)
 	return nil
@@ -92,6 +92,50 @@ func (am *AManager) Remove(name string) {
 	}
 	am.actorMap.Delete(name)
 	am.removeFromCategories(ab)
+}
+
+// CloseActor 关闭指定 Actor 并从管理器中移除，Actor 生命周期统一由管理器负责。
+func (am *AManager) CloseActor(name string, timeout time.Duration) error {
+	ab := am.Find(name)
+	if ab == nil {
+		return ErrActorNotFound
+	}
+	err := ab.Shutdown(timeout)
+	// 无论关闭结果如何都从注册表移除，避免残留已关闭的 Actor。
+	am.Remove(name)
+	if err != nil {
+		logger.ERROR("close actor error:", err, "name:", name)
+	}
+	return err
+}
+
+// StartActor 创建并启动一个常驻服务 Actor（无连接），注册到管理器。
+func (am *AManager) StartActor(name string, callBack IActor, config *ActorConfig) (*ActorBase, error) {
+	ab := NewActorBase(name, callBack, config)
+	if ab == nil {
+		return nil, fmt.Errorf("create actor base failed: %s", name)
+	}
+	if err := am.Add(ab); err != nil {
+		return nil, err
+	}
+	return ab, nil
+}
+
+// StartPlayer 创建并启动玩家 Actor，注册到管理器。
+func (am *AManager) StartPlayer(name string, conn network.NetConn) (*Player, error) {
+	playerActor := &Player{
+		name: name,
+		ip:   conn.RemoteAddr(),
+		conn: conn,
+		PlayerData: &PlayerData{
+			Name:        name,
+			LastLoginAt: time.Now().Unix(),
+		},
+	}
+	if _, err := am.StartActor(name, playerActor, nil); err != nil {
+		return nil, err
+	}
+	return playerActor, nil
 }
 
 // Find 根据名称查找 Actor 实例。
@@ -156,54 +200,67 @@ func (am *AManager) ShutdownActors(timeout time.Duration) {
 	})
 }
 
-// CastMsg 向指定 Actor 发送异步消息。
-func (am *AManager) CastMsg(name string, msg interface{}) error {
-	actor := am.Find(name)
-	if actor == nil {
-		return ErrActorNotFound
-	}
-	if actor.isClosed() {
-		return ErrActorClose
-	}
-
-	timer := time.NewTimer(actor.config.SendTimeout)
-	defer timer.Stop()
-	select {
-	case actor.request <- msg:
-		return nil
-	case <-timer.C:
-		return ErrSendTimeout
-	}
+// Deliver 投递客户端消息（来自网络层）。msg 为协议帧字节。
+func (am *AManager) Deliver(name string, data []byte) error {
+	return am.deliver(name, &Envelope{From: "server", Kind: MsgClient, Payload: data})
 }
 
-// CallMsg 向指定 Actor 发送同步调用请求。
-func (am *AManager) CallMsg(name string, msg interface{}) (interface{}, error) {
-	actor := am.Find(name)
-	if actor == nil {
+// Send 向其他 actor 异步投递消息。
+func (am *AManager) Send(to, from string, msg interface{}) error {
+	return am.deliver(to, &Envelope{From: from, Kind: MsgSend, Payload: msg})
+}
+
+// Call 向其他 actor 发起 RPC 并等待回复。
+func (am *AManager) Call(to, from string, msg interface{}, timeout time.Duration) (interface{}, error) {
+	if to == from {
+		return nil, ErrSelfCall
+	}
+	ab := am.Find(to)
+	if ab == nil {
 		return nil, ErrActorNotFound
 	}
-	if actor.isClosed() {
+	if ab.isClosed() {
 		return nil, ErrActorClose
 	}
 
-	req := &CallRequest{
-		Msg:      msg,
-		Response: make(chan interface{}, 1),
+	env := &Envelope{
+		From:    from,
+		Kind:    MsgCall,
+		Payload: msg,
+		Reply:   make(chan interface{}, 1),
+	}
+	if err := am.deliver(to, env); err != nil {
+		return nil, err
 	}
 
-	timer := time.NewTimer(actor.config.SendTimeout)
+	timer := time.NewTimer(timeout)
 	defer timer.Stop()
-
 	select {
-	case actor.request <- req:
-	case <-timer.C:
-		return nil, ErrSendTimeout
-	}
-
-	select {
-	case resp := <-req.Response:
+	case resp := <-env.Reply:
+		if ce, ok := resp.(*CallError); ok {
+			return nil, ce
+		}
 		return resp, nil
 	case <-timer.C:
 		return nil, ErrSendTimeout
+	}
+}
+
+// deliver 投递信封到目标 actor 队列。
+func (am *AManager) deliver(name string, env *Envelope) error {
+	ab := am.Find(name)
+	if ab == nil {
+		return ErrActorNotFound
+	}
+	if ab.isClosed() {
+		return ErrActorClose
+	}
+	timer := time.NewTimer(ab.config.SendTimeout)
+	defer timer.Stop()
+	select {
+	case ab.request <- env:
+		return nil
+	case <-timer.C:
+		return ErrSendTimeout
 	}
 }

@@ -31,7 +31,9 @@ var (
 
 func init() {
 	logger = Logger{
-		Logs: make(chan string),
+		// 有缓冲 + 非阻塞发送：消费者（StartLog）未启动或繁忙时丢弃日志，
+		// 避免任何 StartLog 之前的日志调用阻塞业务协程。
+		Logs: make(chan string, 1024),
 	}
 
 	// 默认写入 io.Discard；若配置开启 SaveLog 则通过 InitLogFile 替换为真实文件
@@ -63,33 +65,37 @@ func InitLogFile() error {
 func DEBUG(v ...interface{}) {
 	debugLogger.Print(v...)
 	sprintf := fmt.Sprintf("\033[33m[DEBUG] %s\033[0m", fmt.Sprint(v...))
-	defer func() {
-		logger.Logs <- sprintf
-	}()
+	select {
+	case logger.Logs <- sprintf:
+	default:
+	}
 }
 
 func INFO(v ...interface{}) {
 	infoLogger.Print(v...)
 	sprintf := fmt.Sprintf("\033[32m[INFO] %s\033[0m", fmt.Sprint(v...))
-	defer func() {
-		logger.Logs <- sprintf
-	}()
+	select {
+	case logger.Logs <- sprintf:
+	default:
+	}
 }
 
 func WARNING(v ...interface{}) {
 	warningLogger.Print(v...)
 	sprintf := fmt.Sprintf("\033[34m[WARNING] %s\033[0m", fmt.Sprint(v...))
-	defer func() {
-		logger.Logs <- sprintf
-	}()
+	select {
+	case logger.Logs <- sprintf:
+	default:
+	}
 }
 
 func ERROR(v ...interface{}) {
 	errorLogger.Print(v...)
 	sprintf := fmt.Sprintf("\033[31m[ERROR] %s\033[0m", fmt.Sprint(v...))
-	defer func() {
-		logger.Logs <- sprintf
-	}()
+	select {
+	case logger.Logs <- sprintf:
+	default:
+	}
 }
 
 func (l *Logger) appendLog(log string) {
