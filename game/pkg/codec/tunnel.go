@@ -1,32 +1,20 @@
 // game/tunnel/tunnel.go
-// TunnelMsg 在 PacketMsg 外层包裹路由标识，用于 Agent↔Game 之间的消息转发。
+// TunnelMsg 握手阶段专用消息，用于 Agent↔Game 之间的握手结果转发。
+// 业务消息已改为二进制帧（见 pkg/protocol），不再经过 JSON。
 package codec
 
 import (
 	"encoding/json"
 )
 
-// TunnelMsg 带路由标识的消息结构。
-// 比 PacketMsg 多一个 TunnelID，Agent 通过该字段做 client↔game 双向映射。
+// TunnelMsg 握手阶段带路由标识的消息结构。
 type TunnelMsg struct {
 	Name     string `json:"name"`
 	Data     []byte `json:"data"`
 	TunnelID string `json:"tunnel_id"`
 }
 
-// PackTunnel 将 PacketMsg 和 tunnelID 打包为 JSON 字节。
-func PackTunnel(msg *PacketMsg, tunnelID string) []byte {
-	tm := &TunnelMsg{
-		Name:     msg.Name,
-		Data:     msg.Data,
-		TunnelID: tunnelID,
-	}
-	b, _ := json.Marshal(tm)
-	return b
-}
-
-// PackTunnelRaw 将原始消息字节和 tunnelID 直接打包为 TunnelMsg JSON。
-// name 用于设置消息类型标识，data 是原始 protobuf 二进制。
+// PackTunnelRaw 将握手结果和 tunnelID 打包为 TunnelMsg JSON。
 func PackTunnelRaw(name string, data []byte, tunnelID string) []byte {
 	tm := &TunnelMsg{
 		Name:     name,

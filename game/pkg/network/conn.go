@@ -1,6 +1,7 @@
 package network
 
 import (
+	"bufio"
 	"fmt"
 	"net"
 	"time"
@@ -50,14 +51,15 @@ func NewListener(network, addr, port string) (Listener, error) {
 
 // ---------- tcpConn / tcpListener ----------
 
-// tcpConn 包装 net.Conn，复用现有的 4 字节大端长度头分包逻辑（pkg.RecvData / pkg.SendData）。
+// tcpConn 包装 net.Conn，使用持久 bufio.Reader + 4 字节大端长度头拆包。
 type tcpConn struct {
 	conn          net.Conn
+	reader        *bufio.Reader
 	writeDeadline time.Time
 }
 
 func (c *tcpConn) ReadMessage() ([]byte, error) {
-	return codec.RecvData(c.conn)
+	return codec.RecvFrame(c.reader)
 }
 
 func (c *tcpConn) WriteMessage(data []byte) error {
@@ -105,7 +107,7 @@ func (l *tcpListener) Accept() (NetConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &tcpConn{conn: c}, nil
+	return &tcpConn{conn: c, reader: bufio.NewReader(c)}, nil
 }
 
 func (l *tcpListener) Close() error {

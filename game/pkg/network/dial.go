@@ -1,6 +1,7 @@
 package network
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"net"
@@ -19,7 +20,7 @@ func Dial(network, addr string) (NetConn, error) {
 		if err != nil {
 			return nil, fmt.Errorf("tcp dial %s: %w", addr, err)
 		}
-		return &tcpConn{conn: conn}, nil
+		return &tcpConn{conn: conn, reader: bufio.NewReader(conn)}, nil
 	case "ws", "websocket":
 		url := fmt.Sprintf("ws://%s/ws", addr)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

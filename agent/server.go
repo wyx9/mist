@@ -155,13 +155,8 @@ func clientToGame(sess *Session) {
 			_ = sess.GameConn.Close()
 			return
 		}
-		// 解析 PacketMsg 提取 name/data，注入 tunnel_id
-		codePack := codec.DeCodePack(data)
-		if codePack == nil {
-			continue
-		}
-		wrapped := codec.PackTunnelRaw(codePack.Name, codePack.Data, sess.TunnelID)
-		if err := sess.GameConn.WriteMessage(wrapped); err != nil {
+		// 纯字节转发：不解析、不重打包（连接已在握手时建立 player 映射）
+		if err := sess.GameConn.WriteMessage(data); err != nil {
 			_ = sess.ClientConn.Close()
 			return
 		}
@@ -176,14 +171,8 @@ func gameToClient(sess *Session) {
 			_ = sess.ClientConn.Close()
 			return
 		}
-		// 解包 TunnelMsg 获取原始 PacketMsg
-		tm := codec.UnpackTunnel(data)
-		if tm == nil {
-			continue
-		}
-		// 还原为 PacketMsg JSON 发送给客户端
-		raw := codec.EnCodePack(&codec.PacketMsg{Name: tm.Name, Data: tm.Data})
-		if err := sess.ClientConn.WriteMessage(raw); err != nil {
+		// 纯字节转发
+		if err := sess.ClientConn.WriteMessage(data); err != nil {
 			_ = sess.GameConn.Close()
 			return
 		}

@@ -1,26 +1,24 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"sync/atomic"
 	"time"
 
-	"nhooyr.io/websocket"
-
 	"simple_game/game/api/protos/pt"
-	"simple_game/game/libs"
+	"simple_game/game/pkg/network"
+	"simple_game/game/pkg/protocol"
 )
 
-// WebSocket 测试客户端，对应服务端 ws listener（默认 ws://127.0.0.1:8889/ws）。
-// 消息格式与 TCP 客户端一致：JSON(PacketMsg{Name, Data})，承载在 WS 文本帧中。
+// WebSocket 测试客户端，业务帧格式与 TCP 一致：[2B cmd][protobuf]，
+// 承载在 WS 二进制帧中（对应服务端 wsConn.MessageBinary）。
 //
-// 运行： go run ./client/ws
+// 运行：go run ./client/ws
 
 const (
-	serverURL        = "ws://127.0.0.1:8889/ws"
-	heartbeatPeriod  = 3 * time.Second  // 心跳间隔
-	clientTimeout    = 30 * time.Second // 心跳超时
+	serverAddr      = "127.0.0.1:8889"
+	heartbeatPeriod = 3 * time.Second  // 心跳间隔
+	clientTimeout   = 30 * time.Second // 心跳超时
 )
 
 var (
@@ -42,23 +40,20 @@ func main() {
 }
 
 func connectAndServe() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	c, _, err := websocket.Dial(ctx, serverURL, nil)
+	conn, err := network.Dial("ws", serverAddr)
 	if err != nil {
 		return fmt.Errorf("连接服务器失败: %v", err)
 	}
-	defer c.Close(websocket.StatusNormalClosure, "")
+	defer conn.Close()
 
 	fmt.Println("已连接到服务器")
 	atomic.StoreInt32(&isConnected, 1)
 	atomic.StoreInt64(&lastHeartbeatResp, time.Now().Unix())
 
 	// 读取协程
-	go reader(c)
+	go reader(conn)
 	// 心跳协程
-	go sendHeartbeat(c)
+	go sendHeartbeat(conn)
 
 	// 主循环：从控制台读取输入，发送 LoginReq
 	for atomic.LoadInt32(&isConnected) == 1 {
@@ -74,37 +69,41 @@ func connectAndServe() error {
 			Name:     msg,
 			PassWord: "123",
 		}
-		packBy := libs.Pack2Msg(req)
+		packBy, err := protocol.PackCmd(protocol.CmdLogin, req)
+		if err != nil {
+			fmt.Println("打包登录请求失败:", err)
+			continue
+		}
 
-		// WS 文本帧承载 JSON(PacketMsg)，与服务端 wsConn.WriteMessage 一致
-		writeCtx, writeCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := c.Write(writeCtx, websocket.MessageText, packBy); err != nil {
+		if err := conn.WriteMessage(packBy); err != nil {
 			fmt.Println("发送消息失败:", err)
 			atomic.StoreInt32(&isConnected, 0)
-			writeCancel()
 			break
 		}
-		writeCancel()
 	}
 	return nil
 }
 
-func reader(c *websocket.Conn) {
+func reader(conn network.NetConn) {
 	for {
-		ctx, cancel := context.WithTimeout(context.Background(), clientTimeout)
-		_, data, err := c.Read(ctx)
-		cancel()
+		data, err := conn.ReadMessage()
 		if err != nil {
 			atomic.StoreInt32(&isConnected, 0)
 			fmt.Println("连接断开:", err)
 			return
 		}
 		atomic.StoreInt64(&lastHeartbeatResp, time.Now().Unix())
-		fmt.Println("收到消息：" + string(data))
+
+		cmd, body, err := protocol.DecodeFrame(data)
+		if err != nil {
+			fmt.Println("解码帧失败:", err)
+			continue
+		}
+		fmt.Printf("收到消息：cmd=%d body=%d 字节\n", cmd, len(body))
 	}
 }
 
-func sendHeartbeat(c *websocket.Conn) {
+func sendHeartbeat(conn network.NetConn) {
 	ticker := time.NewTicker(heartbeatPeriod)
 	defer ticker.Stop()
 
@@ -113,21 +112,21 @@ func sendHeartbeat(c *websocket.Conn) {
 			return
 		}
 
-		heartbeat := &pt.HeartReq{}
-		packBy := libs.Pack2Msg(heartbeat)
-
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := c.Write(ctx, websocket.MessageText, packBy); err != nil {
-			fmt.Println("发送心跳包失败:", err)
-			cancel()
+		packBy, err := protocol.PackCmd(protocol.CmdHeart, &pt.HeartReq{})
+		if err != nil {
+			fmt.Println("打包心跳失败:", err)
 			continue
 		}
-		cancel()
+
+		if err := conn.WriteMessage(packBy); err != nil {
+			fmt.Println("发送心跳包失败:", err)
+			continue
+		}
 
 		if time.Now().Unix()-atomic.LoadInt64(&lastHeartbeatResp) > int64(clientTimeout.Seconds()) {
 			fmt.Println("心跳超时，断开连接")
 			atomic.StoreInt32(&isConnected, 0)
-			_ = c.Close(websocket.StatusNormalClosure, "")
+			_ = conn.Close()
 			return
 		}
 	}

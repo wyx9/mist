@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"simple_game/game/api/protos/pt"
-	"simple_game/game/libs"
-	"simple_game/game/pkg"
+	"simple_game/game/pkg/network"
+	"simple_game/game/pkg/protocol"
 )
 
 // 统一测试客户端 — 支持 TCP 和 WebSocket，复用 NetConn 抽象。
@@ -79,7 +79,7 @@ func autoReconnect() {
 		}
 
 		fmt.Printf("[重新连接] 正在连接 %s://%s ...\n", *netFlag, *addr)
-		conn, err := pkg.Dial(*netFlag, *addr)
+		conn, err := network.Dial(*netFlag, *addr)
 		if err != nil {
 			fmt.Printf("[错误] 连接失败: %v，%v 后重试\n", err, reconnectDelay)
 			time.Sleep(reconnectDelay)
@@ -104,7 +104,7 @@ func autoReconnect() {
 }
 
 // reader 读取服务端回包
-func reader(conn pkg.NetConn, done chan struct{}) {
+func reader(conn network.NetConn, done chan struct{}) {
 	defer close(done)
 
 	for atomic.LoadInt32(&isConnected) == 1 {
@@ -115,12 +115,17 @@ func reader(conn pkg.NetConn, done chan struct{}) {
 			return
 		}
 		atomic.StoreInt64(&lastHeartbeatResp, time.Now().Unix())
-		fmt.Printf("[收到] %s\n", string(data))
+		cmd, body, err := protocol.DecodeFrame(data)
+		if err != nil {
+			fmt.Printf("[解码错误] %v\n", err)
+			continue
+		}
+		fmt.Printf("[收到] cmd=%d body=%d 字节\n", cmd, len(body))
 	}
 }
 
 // heartbeat 定时发送心跳
-func heartbeat(conn pkg.NetConn, done chan struct{}) {
+func heartbeat(conn network.NetConn, done chan struct{}) {
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 
@@ -133,7 +138,11 @@ func heartbeat(conn pkg.NetConn, done chan struct{}) {
 				return
 			}
 
-			pack := libs.Pack2Msg(&pt.HeartReq{})
+			pack, err := protocol.PackCmd(protocol.CmdHeart, &pt.HeartReq{})
+			if err != nil {
+				fmt.Printf("[心跳错误] 打包失败: %v\n", err)
+				continue
+			}
 			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			if err := conn.WriteMessage(pack); err != nil {
 				fmt.Printf("[心跳错误] 发送失败: %v\n", err)
@@ -192,10 +201,14 @@ func sendLogin(name string) {
 		Name:     name,
 		PassWord: "123",
 	}
-	pack := libs.Pack2Msg(req)
+	pack, err := protocol.PackCmd(protocol.CmdLogin, req)
+	if err != nil {
+		fmt.Printf("[登录错误] 打包失败: %v\n", err)
+		return
+	}
 
 	// LoginReq 需要新建连接发送（服务端要求首包必须是 LoginReq）
-	conn, err := pkg.Dial(*netFlag, *addr)
+	conn, err := network.Dial(*netFlag, *addr)
 	if err != nil {
 		fmt.Printf("[登录错误] 连接失败: %v\n", err)
 		return
@@ -216,7 +229,13 @@ func sendLogin(name string) {
 		_ = conn.Close()
 		return
 	}
-	fmt.Printf("[登录成功] 响应: %s\n", string(data))
+	cmd, _, err := protocol.DecodeFrame(data)
+	if err != nil {
+		fmt.Printf("[登录成功] 响应解码失败: %v\n", err)
+		_ = conn.Close()
+		return
+	}
+	fmt.Printf("[登录成功] 响应 cmd=%d\n", cmd)
 	_ = conn.Close()
 }
 

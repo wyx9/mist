@@ -7,12 +7,12 @@ import (
 	"net/http"
 	"time"
 
-	"simple_game/game/pkg/logger"
 	"nhooyr.io/websocket"
+	"simple_game/game/pkg/logger"
 )
 
 // wsConn 包装 *websocket.Conn，实现 NetConn 接口。
-// 消息格式与 TCP 一致：JSON(PacketMsg)，承载在 WebSocket 文本帧中。
+// 业务消息为二进制帧 [2B cmd][protobuf]，承载在 WebSocket 二进制帧中。
 type wsConn struct {
 	conn          *websocket.Conn
 	remote        string
@@ -40,14 +40,14 @@ func (c *wsConn) ReadMessage() ([]byte, error) {
 }
 
 func (c *wsConn) WriteMessage(data []byte) error {
-	// 文本帧承载 JSON(PacketMsg)，与 routes/controller 的预期一致
+	// 二进制帧承载 [2B cmd][protobuf]，与 TCP 载荷格式一致
 	ctx := context.Background()
 	if !c.writeDeadline.IsZero() {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithDeadline(ctx, c.writeDeadline)
 		defer cancel()
 	}
-	return c.conn.Write(ctx, websocket.MessageText, data)
+	return c.conn.Write(ctx, websocket.MessageBinary, data)
 }
 
 func (c *wsConn) RemoteAddr() string {
