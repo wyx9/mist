@@ -82,3 +82,4 @@
 - 按逻辑点分步提交，一个 commit 一个主题
 - commit message 用中文 Conventional Commits：`feat:` / `refactor:` / `fix:` / `docs:` / `chore:` 等
 - 提交前确认不夹带无关文件（如本地工具配置）
+- 不主动推送到远端：只有用户明确要求 push 时才执行；push 前先确认当前分支与远端地址
