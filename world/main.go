@@ -61,6 +61,18 @@ func main() {
 		cfg.MySql.User, cfg.MySql.PassWord, cfg.MySql.Addr, cfg.MySql.Port, cfg.MySql.DBName)
 	mysql.MysqlStart(dsn)
 
+	// 确保账号表存在（name -> uid 映射）
+	if _, err := mysql.DB.Exec(`CREATE TABLE IF NOT EXISTS accounts (
+		name       VARCHAR(64) NOT NULL,
+		uid        BIGINT      NOT NULL,
+		created_at DATETIME(3) NOT NULL,
+		PRIMARY KEY (name),
+		UNIQUE KEY uk_uid (uid)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`); err != nil {
+		fmt.Println("create accounts table failed:", err)
+		os.Exit(1)
+	}
+
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     cfg.Redis.Addr,
 		Password: cfg.Redis.PassWord,

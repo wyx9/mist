@@ -8,10 +8,11 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// generateToken 签发 JWT token。
-func generateToken(playerName string, secret []byte, expireDuration time.Duration) (string, error) {
+// generateToken 签发 JWT token，携带 playerName 与 uid（游戏服持久化主键）。
+func generateToken(playerName string, uid int64, secret []byte, expireDuration time.Duration) (string, error) {
 	claims := jwt.MapClaims{
 		"sub": playerName,
+		"uid": uid,
 		"iat": time.Now().Unix(),
 		"exp": time.Now().Add(expireDuration).Unix(),
 	}
@@ -19,7 +20,7 @@ func generateToken(playerName string, secret []byte, expireDuration time.Duratio
 	return token.SignedString(secret)
 }
 
-// verifyWorldToken 验证 JWT token（World 端也保留验证能力用于调试）。
+// verifyWorldToken 验证 JWT token（World 端保留验证能力用于调试）。
 func verifyWorldToken(tokenStr string, secret []byte) (string, error) {
 	token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
