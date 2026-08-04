@@ -5,6 +5,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -15,6 +16,7 @@ var (
 	machineID     int64 // 机器 id 占10位, 十进制范围是 [ 0, 1023 ]
 	sn            int64 // 序列号占 12 位,十进制范围是 [ 0, 4095 ]
 	lastTimeStamp int64 // 上次的时间戳(毫秒级), 1秒=1000毫秒, 1毫秒=1000微秒,1微秒=1000纳秒
+	mu            sync.Mutex
 )
 
 func getLocalIP() net.IP {
@@ -43,6 +45,8 @@ func SetMachineId(mid int64) {
 }
 
 func GetSnowflakeId() int64 {
+	mu.Lock()
+	defer mu.Unlock()
 	curTimeStamp := time.Now().UnixNano() / 1000000
 	// 同一毫秒
 	if curTimeStamp == lastTimeStamp {
