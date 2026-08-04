@@ -1,104 +1,101 @@
 package actor
 
 import (
-	"encoding/json"
-	"fmt"
-
-	"simple_game/game/internal/route"
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/network"
-	"simple_game/game/pkg/protocol"
-	"simple_game/game/pkg/redis"
 )
 
-// Player 玩家Actor结构体，实现了IActor接口
+// Player 玩家 Actor，实现 IActor / Persistable / MessageHandler。
 type Player struct {
-	name       string          // 玩家名称
-	ip         string          // 玩家IP地址
-	ac         IActor          // Actor接口实现
+	name       string          // 玩家名（登录名/路由名）
+	uid        int64           // 玩家全局唯一 id（持久化主键，来自账号体系）
+	ip         string          // 玩家 IP 地址
 	conn       network.NetConn // 网络连接（协议无关）
+	handle     PersistHandle   // 持久化句柄（由 gameserver 创建时注入）
+	dirty      bool            // 脏标记：数据变更后置位，持久化 tick 落地
 	PlayerData *PlayerData     // 玩家数据
 }
 
-// PlayerData 玩家数据结构体，用于存储玩家的基本信息
+// PlayerData 玩家数据，序列化后存储。
 type PlayerData struct {
-	Name        string // 玩家名称
+	UID         int64  // 玩家唯一 id
+	Name        string // 玩家名
 	LastLoginAt int64  // 最后登录时间
 }
 
-// Start 玩家Actor启动时的初始化
+// Start 玩家 Actor 启动时加载数据（Redis -> MySQL -> 默认值）。
 func (p *Player) Start() {
-	p.loadPlayer() // 加载玩家数据
+	p.loadPlayer()
 }
 
 // Category 返回 Actor 类别标识。
 func (p *Player) Category() string { return "player" }
 
-// Stop 玩家Actor停止时的清理
+// Stop 玩家 Actor 停止时同步落地兜底。
 func (p *Player) Stop() {
-	// 持久化玩家数据
-	logger.INFO("player stop ,player name :", p.name)
-	p.persistence()
+	p.flushNow()
 }
 
-// PersistenceKey 生成玩家数据的持久化键
-func (p *Player) PersistenceKey() string {
-	return fmt.Sprintf("player_data_%s", p.PlayerData.Name)
+// ActorID 实现 Persistable：返回玩家全局唯一 uid。
+func (p *Player) ActorID() int64 { return p.uid }
+
+// PersistData 实现 Persistable：返回待序列化的玩家数据。
+func (p *Player) PersistData() any { return p.PlayerData }
+
+// SetPersistHandle 实现 SetPersistHandle：创建阶段注入，须在 Start 之前完成。
+func (p *Player) SetPersistHandle(h PersistHandle) { p.handle = h }
+
+// MarkDirty 标记玩家数据已变更，等待下一个持久化 tick 落地。
+func (p *Player) MarkDirty() { p.dirty = true }
+
+// HandleMessage 处理内部消息：PersistTick 时按脏标记落地。
+func (p *Player) HandleMessage(ctx *ActorContext, msg interface{}) {
+	if _, ok := msg.(PersistTick); ok {
+		p.flushIfDirty()
+	}
 }
 
-// persistence 将玩家数据持久化到Redis
-func (p *Player) persistence() {
-	data := p.PlayerData
-	marshal, _ := json.Marshal(data)
-	key := p.PersistenceKey()
-	redis.RedisClient.Set(redis.RCtx, key, marshal, -1)
-	logger.INFO("player persistence", p.name)
-}
-
-// loadPlayer 从Redis加载玩家数据
+// loadPlayer 通过持久化句柄加载玩家数据；双 miss 时使用默认结构并标记脏以便首次落地。
 func (p *Player) loadPlayer() {
-	key := p.PersistenceKey()
-	cmd := redis.RedisClient.Get(redis.RCtx, key)
-	if cmd.Val() == "" {
+	if p.handle == nil {
+		logger.WARNING("player persist handle not set, skip load:", p.name)
 		return
 	}
-	playerData := p.PlayerData
-
-	_ = json.Unmarshal([]byte(cmd.Val()), playerData)
-	logger.INFO("player persistence", p.name)
+	found, err := p.handle.Load(p.uid, p.PlayerData)
+	if err != nil {
+		logger.ERROR("player load failed:", err, "name:", p.name)
+		return
+	}
+	if !found {
+		p.dirty = true
+		logger.INFO("player no persisted data, use default:", p.name)
+		return
+	}
+	logger.INFO("player data loaded:", p.name)
 }
 
-// Handler 处理接收到的消息
-func (p *Player) Handler(ctx *ActorContext, msg interface{}) {
-	p.HandlerByClient(msg)
+// flushNow 无条件落地玩家数据（actor 退出/停机兜底）。
+func (p *Player) flushNow() {
+	if p.handle == nil {
+		logger.WARNING("player persist handle not set, skip flush:", p.name)
+		return
+	}
+	if err := p.handle.Save(p.uid, p.PlayerData); err != nil {
+		logger.ERROR("player persist failed:", err, "name:", p.name)
+		return
+	}
+	p.dirty = false
 }
 
-// HandlerByClient 处理来自客户端的消息
-func (p *Player) HandlerByClient(msg interface{}) {
-	bytes, ok := msg.([]byte)
-	if !ok {
+// flushIfDirty 仅当脏标记置位时落地（定时 tick 路径）。
+func (p *Player) flushIfDirty() {
+	if !p.dirty {
 		return
 	}
-	// 解码业务帧：cmd + protobuf
-	cmd, body, err := protocol.DecodeFrame(bytes)
-	if err != nil {
-		logger.ERROR("decode frame error:", err)
-		return
-	}
-	// 路由处理消息
-	resCmd, res, err := route.Route(p, cmd, body)
-	if err != nil {
-		logger.ERROR("route error:", cmd, err)
-		return
-	}
-	logger.DEBUG("req cmd :", cmd)
-	if res == nil {
-		return
-	}
-	out, err := protocol.PackCmd(resCmd, res)
-	if err != nil {
-		logger.ERROR("pack response error:", err)
-		return
-	}
-	_ = p.conn.WriteMessage(out)
+	p.flushNow()
+}
+
+// WriteMessage 实现 clientMsgWriter：向该玩家的客户端连接回包。
+func (p *Player) WriteMessage(data []byte) error {
+	return p.conn.WriteMessage(data)
 }

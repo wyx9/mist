@@ -8,8 +8,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// verifyToken 验证 JWT token，返回 player_name。
-func (s *Server) verifyToken(tokenStr string, secret []byte) (string, error) {
+// verifyToken 验证 JWT token，返回 player_name 与 uid（持久化主键）。
+func (s *Server) verifyToken(tokenStr string, secret []byte) (string, int64, error) {
 	token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
@@ -17,15 +17,24 @@ func (s *Server) verifyToken(tokenStr string, secret []byte) (string, error) {
 		return secret, nil
 	})
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok || !token.Valid {
-		return "", fmt.Errorf("invalid token claims")
+		return "", 0, fmt.Errorf("invalid token claims")
 	}
 	sub, _ := claims.GetSubject()
 	if sub == "" {
-		return "", fmt.Errorf("missing sub claim")
+		return "", 0, fmt.Errorf("missing sub claim")
 	}
-	return sub, nil
+	uid := int64(0)
+	if v, ok := claims["uid"]; ok {
+		switch n := v.(type) {
+		case float64:
+			uid = int64(n)
+		case int64:
+			uid = n
+		}
+	}
+	return sub, uid, nil
 }

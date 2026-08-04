@@ -10,13 +10,20 @@ import (
 	"simple_game/game/pkg/logger"
 )
 
-// IActor 定义了Actor的基本接口
-// Actor是一个独立的执行单元，负责处理特定类型的消息和任务
+// IActor 定义 Actor 的基本接口。
+// 客户端消息（MsgClient）由框架统一通过 HandleClientMsg 分发，无需在此声明；
+// 需要接收内部异步消息/RPC 的 actor 实现可选的 MessageHandler 接口。
 type IActor interface {
-	Start()                                     // Actor启动时的初始化
-	Stop()                                      // Actor停止时的清理
-	Handler(ctx *ActorContext, msg interface{}) // 消息处理函数，通过 ctx 与其他 Actor 通信或回包
-	Category() string                           // Actor类别标识: "player", "npc", "room" 等
+	Start()           // Actor启动时的初始化
+	Stop()            // Actor停止时的清理
+	Category() string // Actor类别标识: "player", "npc", "room" 等
+}
+
+// MessageHandler 可选的内部消息处理器：实现了它的 actor 可以接收
+// MsgSend（异步内部消息）与 MsgCall（RPC）；未实现时异步消息被丢弃、
+// RPC 自动回复 nil。
+type MessageHandler interface {
+	HandleMessage(ctx *ActorContext, msg interface{})
 }
 
 // 定义错误常量
@@ -113,15 +120,32 @@ var DefaultConfig = ActorConfig{
 
 // ActorBase Actor基础结构体，提供Actor的基本功能实现
 type ActorBase struct {
-	name    string             // Actor名称，用于标识不同的Actor实例
-	iActor  IActor             // Actor接口实现，包含具体的业务逻辑
-	manager *AManager          // Actor管理器引用，用于内部 RPC 路由
-	request chan interface{}   // 请求消息通道，用于接收待处理的消息
-	stop    chan struct{}      // 停止信号通道，用于通知Actor停止运行
-	config  ActorConfig        // Actor配置，包含运行参数
-	closed  int32              // 关闭状态标志(原子操作)，用于安全地标记Actor状态
-	ctx     context.Context    // 上下文，用于控制Actor的生命周期
-	cancel  context.CancelFunc // 取消函数，用于取消上下文
+	name          string                                   // Actor名称，用于标识不同的Actor实例
+	id            int64                                    // 全局唯一 uid（雪花/账号 id），由 StartActor 创建时统一赋值
+	iActor        IActor                                   // Actor接口实现，包含具体的业务逻辑
+	clientHandler func(ctx *ActorContext, msg interface{}) // 客户端消息分发：StartActor 注入，默认走 HandleClientMsg
+	manager       *AManager                                // Actor管理器引用，用于内部 RPC 路由
+	request       chan interface{}                         // 请求消息通道，用于接收待处理的消息
+	stop          chan struct{}                            // 停止信号通道，用于通知Actor停止运行
+	config        ActorConfig                              // Actor配置，包含运行参数
+	closed        int32                                    // 关闭状态标志(原子操作)，用于安全地标记Actor状态
+	ctx           context.Context                          // 上下文，用于控制Actor的生命周期
+	cancel        context.CancelFunc                       // 取消函数，用于取消上下文
+}
+
+// ID 返回 Actor 全局唯一 uid。
+func (ac *ActorBase) ID() int64 {
+	return atomic.LoadInt64(&ac.id)
+}
+
+// SetID 设置 Actor uid（仅创建阶段调用，须在注册进管理器之前完成）。
+func (ac *ActorBase) SetID(id int64) {
+	atomic.StoreInt64(&ac.id, id)
+}
+
+// Actor 返回具体 actor 实例，供框架层做接口断言（如 Persistable）。
+func (ac *ActorBase) Actor() IActor {
+	return ac.iActor
 }
 
 // isClosed 检查Actor是否已关闭
@@ -188,7 +212,7 @@ func (ac *ActorBase) handleEnvelope(env *Envelope) {
 				replyCallError(env, ctx, fmt.Sprintf("handler panic: %v", r))
 			}
 		}()
-		ac.iActor.Handler(ctx, env.Payload)
+		ac.dispatch(env, ctx)
 		// RPC 兜底：handler 未显式回复时自动回 nil，避免调用方永久挂起
 		if env.Kind == MsgCall && ctx.replied.CompareAndSwap(false, true) {
 			env.Reply <- nil
@@ -200,6 +224,31 @@ func (ac *ActorBase) handleEnvelope(env *Envelope) {
 	case <-handleCtx.Done():
 		logger.ERROR("message handling timed out for actor ,", ac.name)
 		replyCallError(env, ctx, "handler timeout")
+	}
+}
+
+// dispatch 按消息类型分发：
+//   - MsgClient：走 StartActor 注入的 clientHandler（默认 HandleClientMsg）；
+//   - MsgSend / MsgCall：走可选的 MessageHandler 接口，未实现时异步消息丢弃、RPC 兜底回 nil。
+func (ac *ActorBase) dispatch(env *Envelope, ctx *ActorContext) {
+	switch env.Kind {
+	case MsgClient:
+		if ac.clientHandler != nil {
+			ac.clientHandler(ctx, env.Payload)
+		} else {
+			logger.WARNING("actor has no client handler, drop message:", ac.name)
+		}
+	case MsgSend:
+		if h, ok := ac.iActor.(MessageHandler); ok {
+			h.HandleMessage(ctx, env.Payload)
+		} else {
+			logger.WARNING("actor does not handle internal messages, drop:", ac.name)
+		}
+	case MsgCall:
+		if h, ok := ac.iActor.(MessageHandler); ok {
+			h.HandleMessage(ctx, env.Payload)
+		}
+		// 未实现 MessageHandler 时保持静默，由调用方 RPC 兜底回复 nil。
 	}
 }
 

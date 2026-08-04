@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"simple_game/game/internal/route"
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/mysql"
 	"simple_game/game/pkg/redis"
@@ -20,7 +19,9 @@ import (
 	"time"
 
 	"simple_game/game/internal/actor"
+	"simple_game/game/internal/controller"
 	"simple_game/game/internal/dispatch"
+	"simple_game/game/internal/persist"
 	"simple_game/game/pkg/network"
 )
 
@@ -34,8 +35,14 @@ type Server struct {
 	// Actor管理器（全局单例，跟随 Server 生命周期）
 	ActorManner *actor.AManager
 
+	// 持久化管理器（生命周期跟随 Server）
+	persist *persist.Manager
+
 	// Agent 连接表 — tunnelID → network.NetConn
 	agentConns sync.Map
+
+	// 登录后绑定的玩家 uid 表 — tunnelID → int64(uid)
+	uidByTunnel sync.Map
 
 	// 消息路由层
 	workerPool *dispatch.WorkerPool
@@ -91,8 +98,16 @@ func (s *Server) Start() error {
 	redis.RedisStart(cfg.Redis.Addr, cfg.Redis.PassWord, cfg.Redis.DB)
 
 	// Phase 3: 业务初始化
-	route.RegisteredRoute()
+	controller.RegisterAll()
 	s.ActorManner.RegisterAll()
+	persistMgr, err := newPersistManager(cfg, s.ActorManner)
+	if err != nil {
+		return fmt.Errorf("init persistence: %w", err)
+	}
+	if err := persistMgr.Start(); err != nil {
+		return fmt.Errorf("start persistence: %w", err)
+	}
+	s.persist = persistMgr
 	s.workerPool = dispatch.NewWorkerPool(0) // CPU 核心数
 
 	// Phase 4: 对外服务 (goroutine)
@@ -134,17 +149,22 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 	// 3. 关闭所有 Actor
 	s.ActorManner.ShutdownActors(5 * time.Second)
 
-	// 4. 关闭 worker pool
+	// 4. 停持久化：先停 ticker，再做 Redis->MySQL 最终同步
+	if s.persist != nil {
+		s.persist.Stop(10 * time.Second)
+	}
+
+	// 5. 关闭 worker pool
 	if s.workerPool != nil {
 		s.workerPool.Shutdown()
 	}
 
-	// 5. 取消 context
+	// 6. 取消 context
 	if s.cancel != nil {
 		s.cancel()
 	}
 
-	// 6. 等待所有连接处理完成
+	// 7. 等待所有连接处理完成
 	done := make(chan struct{})
 	go func() {
 		s.wg.Wait()
@@ -154,6 +174,14 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 	case <-done:
 	case <-time.After(timeout):
 		logger.ERROR("shutdown timeout after", timeout)
+	}
+
+	// 8. 关闭基础设施连接
+	if mysql.DB != nil {
+		_ = mysql.DB.Close()
+	}
+	if redis.RedisClient != nil {
+		_ = redis.RedisClient.Close()
 	}
 
 	logger.INFO("Game server stopped")

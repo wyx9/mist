@@ -6,11 +6,12 @@ import (
 	"time"
 
 	"simple_game/game/internal/actor"
+	"simple_game/game/pkg/protocol"
 )
 
 // Deliver 投递客户端消息到 Actor。
-func (s *Server) Deliver(name string, data []byte) error {
-	return s.ActorManner.Deliver(name, data)
+func (s *Server) Deliver(name string, msg *protocol.Msg) error {
+	return s.ActorManner.Deliver(name, msg)
 }
 
 // Send 向 Actor 异步投递内部消息。

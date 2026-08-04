@@ -22,3 +22,16 @@ Redis:
   Addr: "127.0.0.1:6379"
   PassWord: "123456"
   DB: 4
+
+Persistence:
+  RedisFlushInterval: "2s"
+  MysqlFlushInterval: "5s"
+  MysqlBatchSize: 100
+  RedisQueueSize: 4096
+  Categories:
+    player:
+      RedisKeyPrefix: "actor_data:player:"
+      Table: "player_data"
+      DBName: ""
+      Codec: "json"
+      FlushInterval: "2s"

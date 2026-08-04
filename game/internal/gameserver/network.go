@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"simple_game/game/internal/actor"
 	"simple_game/game/pkg/codec"
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/network"
@@ -69,11 +70,14 @@ func (s *Server) handleAgentConn(conn network.NetConn, secret []byte) {
 		return
 	}
 
-	playerName, err := s.verifyToken(hs.Token, secret)
+	playerName, uid, err := s.verifyToken(hs.Token, secret)
 	if err != nil {
 		logger.ERROR("token verify failed:", err)
 		_ = conn.WriteMessage([]byte(`{"error":"invalid token"}`))
 		return
+	}
+	if uid == 0 {
+		logger.WARNING("token without uid, player:", playerName)
 	}
 
 	tunnelID := playerName
@@ -81,9 +85,14 @@ func (s *Server) handleAgentConn(conn network.NetConn, secret []byte) {
 	defer func() {
 		_ = s.ActorManner.CloseActor(tunnelID, 5*time.Second)
 		s.agentConns.Delete(tunnelID)
+		s.uidByTunnel.Delete(tunnelID)
 	}()
 
-	_, err = s.ActorManner.StartPlayer(tunnelID, conn)
+	var handle actor.PersistHandle
+	if s.persist != nil {
+		handle = s.persist.HandleFor("player")
+	}
+	_, err = s.ActorManner.StartPlayer(tunnelID, uid, conn, handle)
 	if err != nil {
 		logger.ERROR("start player actor failed:", err)
 		return

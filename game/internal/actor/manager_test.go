@@ -1,31 +1,26 @@
 package actor
 
 import (
-	"context"
 	"fmt"
 	"testing"
 	"time"
 
-	goredis "github.com/go-redis/redis/v8"
-
 	"simple_game/game/pkg/network"
-	"simple_game/game/pkg/redis"
 )
 
 // testActor 仅用于测试的 IActor 实现。
 type testActor struct{}
 
-func (t *testActor) Start()                                     {}
-func (t *testActor) Stop()                                      {}
-func (t *testActor) Handler(ctx *ActorContext, msg interface{}) {}
-func (t *testActor) Category() string                           { return "test" }
+func (t *testActor) Start()           {}
+func (t *testActor) Stop()            {}
+func (t *testActor) Category() string { return "test" }
 
 // echoActor 收到 RPC 后回 "echo:<msg>"。
 type echoActor struct{}
 
 func (e *echoActor) Start() {}
 func (e *echoActor) Stop()  {}
-func (e *echoActor) Handler(ctx *ActorContext, msg interface{}) {
+func (e *echoActor) HandleMessage(ctx *ActorContext, msg interface{}) {
 	ctx.Reply("echo:" + fmt.Sprint(msg))
 }
 func (e *echoActor) Category() string { return "test" }
@@ -38,7 +33,7 @@ type proxyActor struct {
 
 func (p *proxyActor) Start() {}
 func (p *proxyActor) Stop()  {}
-func (p *proxyActor) Handler(ctx *ActorContext, msg interface{}) {
+func (p *proxyActor) HandleMessage(ctx *ActorContext, msg interface{}) {
 	res, err := ctx.Call(p.target, p.msg, time.Second)
 	if err != nil {
 		ctx.Reply(err)
@@ -51,28 +46,28 @@ func (p *proxyActor) Category() string { return "test" }
 // silentActor 收到消息不回复。
 type silentActor struct{}
 
-func (s *silentActor) Start()                                     {}
-func (s *silentActor) Stop()                                      {}
-func (s *silentActor) Handler(ctx *ActorContext, msg interface{}) {}
-func (s *silentActor) Category() string                           { return "test" }
+func (s *silentActor) Start()                                           {}
+func (s *silentActor) Stop()                                            {}
+func (s *silentActor) HandleMessage(ctx *ActorContext, msg interface{}) {}
+func (s *silentActor) Category() string                                 { return "test" }
 
 // panicActor handler 主动 panic。
 type panicActor struct{}
 
-func (p *panicActor) Start()                                     {}
-func (p *panicActor) Stop()                                      {}
-func (p *panicActor) Handler(ctx *ActorContext, msg interface{}) { panic("boom") }
-func (p *panicActor) Category() string                           { return "test" }
+func (p *panicActor) Start()                                           {}
+func (p *panicActor) Stop()                                            {}
+func (p *panicActor) HandleMessage(ctx *ActorContext, msg interface{}) { panic("boom") }
+func (p *panicActor) Category() string                                 { return "test" }
 
 // captureActor 记录收到的异步消息。
 type captureActor struct {
 	ch chan interface{}
 }
 
-func (c *captureActor) Start()                                     {}
-func (c *captureActor) Stop()                                      {}
-func (c *captureActor) Handler(ctx *ActorContext, msg interface{}) { c.ch <- msg }
-func (c *captureActor) Category() string                           { return "test" }
+func (c *captureActor) Start()                                           {}
+func (c *captureActor) Stop()                                            {}
+func (c *captureActor) HandleMessage(ctx *ActorContext, msg interface{}) { c.ch <- msg }
+func (c *captureActor) Category() string                                 { return "test" }
 
 // fakeConn 仅用于测试的 NetConn 实现。
 type fakeConn struct{}
@@ -111,19 +106,18 @@ func TestCloseActor(t *testing.T) {
 }
 
 func TestStartPlayer(t *testing.T) {
-	// Player.Start 会读 Redis；测试环境给一个不可达的客户端，Get 失败返回空值即可。
-	redis.RedisClient = goredis.NewClient(&goredis.Options{Addr: "127.0.0.1:1"})
-	redis.RCtx = context.Background()
-
 	am := &AManager{}
 	am.RegisterCategory(&Player{})
 
-	p, err := am.StartPlayer("p1", &fakeConn{})
+	p, err := am.StartPlayer("p1", 1001, &fakeConn{}, nil)
 	if err != nil {
 		t.Fatalf("start player: %v", err)
 	}
 	if p == nil || p.name != "p1" {
 		t.Fatalf("unexpected player: %+v", p)
+	}
+	if p.uid != 1001 {
+		t.Fatalf("unexpected player uid: %d", p.uid)
 	}
 
 	ab := am.Find("p1")
@@ -132,6 +126,9 @@ func TestStartPlayer(t *testing.T) {
 	}
 	if ab.iActor.Category() != "player" {
 		t.Fatalf("unexpected category: %s", ab.iActor.Category())
+	}
+	if ab.ID() != 1001 {
+		t.Fatalf("unexpected actor id: %d", ab.ID())
 	}
 
 	if err := am.CloseActor("p1", time.Second); err != nil {
@@ -142,10 +139,74 @@ func TestStartPlayer(t *testing.T) {
 	}
 }
 
+// fixedIDActor 提供固定 ActorID，验证 StartActor 沿用而非重新分配。
+type fixedIDActor struct {
+	id int64
+}
+
+func (f *fixedIDActor) Start()           {}
+func (f *fixedIDActor) Stop()            {}
+func (f *fixedIDActor) Category() string { return "test" }
+func (f *fixedIDActor) ActorID() int64   { return f.id }
+
+func TestStartActorUIDAssignment(t *testing.T) {
+	am := &AManager{}
+	am.RegisterCategory(&testActor{})
+
+	// 未提供 ActorID 的 actor：自动分配雪花 uid
+	ab, err := StartActor(am, "auto", &testActor{}, nil)
+	if err != nil {
+		t.Fatalf("start auto: %v", err)
+	}
+	if ab.ID() == 0 {
+		t.Fatal("expected auto-assigned uid")
+	}
+	if err := am.CloseActor("auto", time.Second); err != nil {
+		t.Fatalf("close auto: %v", err)
+	}
+
+	// 提供非零 ActorID 的 actor：沿用该 id
+	ab2, err := StartActor(am, "fixed", &fixedIDActor{id: 42}, nil)
+	if err != nil {
+		t.Fatalf("start fixed: %v", err)
+	}
+	if ab2.ID() != 42 {
+		t.Fatalf("expected actor id 42, got %d", ab2.ID())
+	}
+	if err := am.CloseActor("fixed", time.Second); err != nil {
+		t.Fatalf("close fixed: %v", err)
+	}
+}
+
+func TestRangeByCategory(t *testing.T) {
+	am := &AManager{}
+	am.RegisterCategory(&testActor{})
+	for _, name := range []string{"a", "b", "c"} {
+		if _, err := StartActor(am, name, &testActor{}, nil); err != nil {
+			t.Fatalf("start %s: %v", name, err)
+		}
+	}
+
+	seen := map[string]bool{}
+	am.RangeByCategory("test", func(name string, ab *ActorBase) bool {
+		seen[name] = true
+		return true
+	})
+	if len(seen) != 3 || !seen["a"] || !seen["b"] || !seen["c"] {
+		t.Fatalf("unexpected ranged names: %v", seen)
+	}
+
+	// 未注册类别：空遍历
+	am.RangeByCategory("nope", func(name string, ab *ActorBase) bool {
+		t.Fatal("should not iterate unknown category")
+		return true
+	})
+}
+
 func TestCallRoundtrip(t *testing.T) {
 	am := &AManager{}
 	am.RegisterCategory(&echoActor{})
-	if _, err := am.StartActor("b", &echoActor{}, nil); err != nil {
+	if _, err := StartActor(am, "b", &echoActor{}, nil); err != nil {
 		t.Fatalf("start b: %v", err)
 	}
 
@@ -163,10 +224,10 @@ func TestActorCallActor(t *testing.T) {
 	am.RegisterCategory(&echoActor{})
 	am.RegisterCategory(&proxyActor{})
 
-	if _, err := am.StartActor("b", &echoActor{}, nil); err != nil {
+	if _, err := StartActor(am, "b", &echoActor{}, nil); err != nil {
 		t.Fatalf("start b: %v", err)
 	}
-	if _, err := am.StartActor("a", &proxyActor{target: "b", msg: "ping"}, nil); err != nil {
+	if _, err := StartActor(am, "a", &proxyActor{target: "b", msg: "ping"}, nil); err != nil {
 		t.Fatalf("start a: %v", err)
 	}
 
@@ -182,7 +243,7 @@ func TestActorCallActor(t *testing.T) {
 func TestSelfCallRejected(t *testing.T) {
 	am := &AManager{}
 	am.RegisterCategory(&echoActor{})
-	if _, err := am.StartActor("a", &echoActor{}, nil); err != nil {
+	if _, err := StartActor(am, "a", &echoActor{}, nil); err != nil {
 		t.Fatalf("start a: %v", err)
 	}
 
@@ -194,7 +255,7 @@ func TestSelfCallRejected(t *testing.T) {
 func TestCallNoReplyAutoNil(t *testing.T) {
 	am := &AManager{}
 	am.RegisterCategory(&silentActor{})
-	if _, err := am.StartActor("s", &silentActor{}, nil); err != nil {
+	if _, err := StartActor(am, "s", &silentActor{}, nil); err != nil {
 		t.Fatalf("start s: %v", err)
 	}
 
@@ -210,7 +271,7 @@ func TestCallNoReplyAutoNil(t *testing.T) {
 func TestCallPanicReturnsError(t *testing.T) {
 	am := &AManager{}
 	am.RegisterCategory(&panicActor{})
-	if _, err := am.StartActor("p", &panicActor{}, nil); err != nil {
+	if _, err := StartActor(am, "p", &panicActor{}, nil); err != nil {
 		t.Fatalf("start p: %v", err)
 	}
 
@@ -227,7 +288,7 @@ func TestSend(t *testing.T) {
 	am := &AManager{}
 	captured := &captureActor{ch: make(chan interface{}, 1)}
 	am.RegisterCategory(captured)
-	if _, err := am.StartActor("c", captured, nil); err != nil {
+	if _, err := StartActor(am, "c", captured, nil); err != nil {
 		t.Fatalf("start c: %v", err)
 	}
 

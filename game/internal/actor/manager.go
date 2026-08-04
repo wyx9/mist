@@ -7,6 +7,8 @@ import (
 
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/network"
+	"simple_game/game/pkg/protocol"
+	"simple_game/game/pkg/uid"
 )
 
 // categoryIndex 单个类别的索引结构。
@@ -109,11 +111,25 @@ func (am *AManager) CloseActor(name string, timeout time.Duration) error {
 	return err
 }
 
-// StartActor 创建并启动一个常驻服务 Actor（无连接），注册到管理器。
-func (am *AManager) StartActor(name string, callBack IActor, config *ActorConfig) (*ActorBase, error) {
-	ab := NewActorBase(name, callBack, config)
+// StartActor 创建并启动一个 Actor，注册到管理器。
+// 客户端消息默认走 HandleClientMsg：按具体 actor 类型注入 clientHandler，
+// 响应通过 actor 的 WriteMessage 能力（clientMsgWriter）自动回包。
+// 注意：Go 方法不支持类型参数，因此这是包级泛型函数。
+func StartActor[A IActor](am *AManager, name string, actor A, config *ActorConfig) (*ActorBase, error) {
+	// 框架级身份保证：每个 actor 都有全局唯一 uid。
+	// 具体 actor 若实现 ActorID() 且返回非零（如 Player 使用账号 uid），则沿用；否则自动分配雪花 ID。
+	id := uid.NewUid()
+	if p, ok := any(actor).(interface{ ActorID() int64 }); ok && p.ActorID() != 0 {
+		id = p.ActorID()
+	}
+	ab := NewActorBase(name, actor, config)
 	if ab == nil {
 		return nil, fmt.Errorf("create actor base failed: %s", name)
+	}
+	ab.SetID(id)
+	actorRef := actor
+	ab.clientHandler = func(ctx *ActorContext, msg interface{}) {
+		HandleClientMsg(actorRef, ctx, msg)
 	}
 	if err := am.Add(ab); err != nil {
 		return nil, err
@@ -122,20 +138,39 @@ func (am *AManager) StartActor(name string, callBack IActor, config *ActorConfig
 }
 
 // StartPlayer 创建并启动玩家 Actor，注册到管理器。
-func (am *AManager) StartPlayer(name string, conn network.NetConn) (*Player, error) {
+func (am *AManager) StartPlayer(name string, uid int64, conn network.NetConn, handle PersistHandle) (*Player, error) {
 	playerActor := &Player{
 		name: name,
+		uid:  uid,
 		ip:   conn.RemoteAddr(),
 		conn: conn,
+		handle: handle,
 		PlayerData: &PlayerData{
+			UID:         uid,
 			Name:        name,
 			LastLoginAt: time.Now().Unix(),
 		},
 	}
-	if _, err := am.StartActor(name, playerActor, nil); err != nil {
+	if _, err := StartActor(am, name, playerActor, nil); err != nil {
 		return nil, err
 	}
 	return playerActor, nil
+}
+
+// RangeByCategory 遍历指定类别的所有 Actor。回调返回 false 时停止遍历。
+func (am *AManager) RangeByCategory(category string, fn func(name string, ab *ActorBase) bool) {
+	value, ok := am.categories.Load(category)
+	if !ok {
+		return
+	}
+	ci := value.(*categoryIndex)
+	ci.actors.Range(func(key, value interface{}) bool {
+		ab, ok := value.(*ActorBase)
+		if !ok {
+			return true
+		}
+		return fn(key.(string), ab)
+	})
 }
 
 // Find 根据名称查找 Actor 实例。
@@ -200,9 +235,9 @@ func (am *AManager) ShutdownActors(timeout time.Duration) {
 	})
 }
 
-// Deliver 投递客户端消息（来自网络层）。msg 为协议帧字节。
-func (am *AManager) Deliver(name string, data []byte) error {
-	return am.deliver(name, &Envelope{From: "server", Kind: MsgClient, Payload: data})
+// Deliver 投递客户端消息（来自网络层）。msg 为已解析的消息信封。
+func (am *AManager) Deliver(name string, msg *protocol.Msg) error {
+	return am.deliver(name, &Envelope{From: "server", Kind: MsgClient, Payload: msg})
 }
 
 // Send 向其他 actor 异步投递消息。
