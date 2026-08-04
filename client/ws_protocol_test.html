@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Simple Game — WebSocket 协议测试台</title>
+<style>
+  :root {
+    --bg:#14141f; --panel:#1c1c2e; --panel2:#232338; --border:#2e2e4a;
+    --text:#e8e8f0; --dim:#8a8aa0; --green:#4ade80; --red:#f87171;
+    --blue:#60a5fa; --yellow:#facc15; --purple:#c084fc;
+    --mono:'Cascadia Code','Consolas','Courier New',monospace;
+  }
+  * { box-sizing:border-box; margin:0; padding:0 }
+  body { font-family:'Segoe UI','Microsoft YaHei',system-ui,sans-serif; background:var(--bg);
+         color:var(--text); height:100vh; overflow:hidden; display:flex }
+  ::-webkit-scrollbar { width:8px; height:8px }
+  ::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px }
+  ::-webkit-scrollbar-track { background:transparent }
+
+  /* ── 左侧面板 ── */
+  aside { width:370px; min-width:370px; background:var(--panel); border-right:1px solid var(--border);
+          display:flex; flex-direction:column; overflow-y:auto; padding:14px; gap:12px }
+  aside h2 { font-size:15px; color:var(--blue); border-bottom:1px solid var(--border); padding-bottom:6px }
+  aside h3 { font-size:12px; color:var(--dim); margin-top:2px }
+  section { display:flex; flex-direction:column; gap:6px }
+  label { font-size:12px; color:var(--dim); display:block }
+  input,select,textarea { width:100%; padding:7px 10px; border:1px solid var(--border); border-radius:6px;
+          font-size:13px; outline:none; background:#0d0d1a; color:var(--text); font-family:var(--mono) }
+  input:focus,select:focus,textarea:focus { border-color:var(--blue) }
+  textarea { resize:vertical; min-height:52px }
+  button { cursor:pointer; font-weight:600; border:none; border-radius:6px; padding:8px 12px;
+           font-size:13px; transition:filter .15s }
+  button:hover { filter:brightness(1.12) }
+  button:active { filter:brightness(.94) }
+  .row { display:flex; gap:8px }
+  .row>* { flex:1; min-width:0 }
+  .btn-connect { background:var(--green); color:#06240f }
+  .btn-connect.connected { background:var(--red); color:#2b0606 }
+  .btn-primary { background:var(--blue); color:#04121f }
+  .btn-heart { background:#22d3ee; color:#041318 }
+  .btn-plain { background:var(--panel2); color:var(--text); border:1px solid var(--border) }
+  .btn-ghost { background:transparent; color:var(--dim); border:1px dashed var(--border) }
+  .status { font-size:12px; padding:6px 10px; border-radius:4px; text-align:center; font-weight:600 }
+  .status.on { background:#14532d; color:var(--green) }
+  .status.off { background:#450a0a; color:var(--red) }
+  .chk { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--dim) }
+  .chk input { width:auto }
+  .preset-btns { display:flex; flex-wrap:wrap; gap:5px }
+  .preset-btns button { width:auto; padding:5px 10px; font-size:12px }
+  details.help { background:var(--panel2); border:1px solid var(--border); border-radius:6px; padding:8px 10px }
+  details.help summary { cursor:pointer; font-size:12px; color:var(--yellow) }
+  details.help ol { margin:8px 0 0 18px; font-size:12px; color:var(--dim); display:flex; flex-direction:column; gap:4px }
+  details.help code { color:var(--yellow); font-family:var(--mono) }
+  .field-label { display:flex; justify-content:space-between; align-items:baseline }
+  .field-label .hint { color:var(--dim); font-size:11px }
+  .token-box textarea { min-height:70px; font-size:11px; word-break:break-all }
+
+  /* ── 右侧消息区 ── */
+  main { flex:1; display:flex; flex-direction:column; min-width:0 }
+  .main-head { padding:12px 16px; background:var(--panel); border-bottom:1px solid var(--border);
+               display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap }
+  .main-head h2 { font-size:15px }
+  .stats { font-size:12px; color:var(--dim); display:flex; gap:14px }
+  .stats b { color:var(--text) }
+  .stats .s-sent b { color:var(--blue) }
+  .stats .s-recv b { color:var(--green) }
+  .stats .s-pend b { color:var(--yellow) }
+  .filters { display:flex; gap:4px; align-items:center; font-size:12px; color:var(--dim) }
+  .filters label { display:flex; align-items:center; gap:4px; cursor:pointer; padding:3px 7px;
+                   border:1px solid var(--border); border-radius:12px }
+  .filters label.on { background:var(--panel2); color:var(--text) }
+  .filters input { width:auto }
+
+  .log-list { flex:1; overflow-y:auto; padding:10px 14px; display:flex; flex-direction:column; gap:6px }
+  .entry { padding:7px 10px; border-radius:5px; font-size:12.5px; font-family:var(--mono);
+           line-height:1.55; white-space:pre-wrap; word-break:break-all; border-left:3px solid transparent }
+  .entry .ts { color:var(--dim); margin-right:8px; font-size:11px }
+  .entry .arrow { font-weight:700 }
+  .entry .label { background:var(--panel2); padding:1px 6px; border-radius:3px; font-size:11px }
+  .entry .cmd { color:var(--purple) }
+  .entry .match { color:var(--green); font-weight:600 }
+  .entry .pill { padding:1px 6px; border-radius:3px; font-size:11px; font-weight:700 }
+  .entry .pill.t1 { background:#1e3a8a55; color:var(--blue) }
+  .entry .pill.t2 { background:#14532d55; color:var(--green) }
+  .entry .pill.t3 { background:#4a044e55; color:var(--purple) }
+  .entry details { margin-top:4px }
+  .entry summary { cursor:pointer; color:var(--dim); font-size:11.5px }
+  .entry .kv { color:var(--dim); font-size:11.5px; margin-top:3px }
+  .entry .err-text { color:var(--red) }
+  .entry .hex { color:#7dd3fc; font-size:11px; word-break:break-all }
+  .entry.sent { background:#1e3a8a22; border-left-color:var(--blue) }
+  .entry.sent .arrow { color:var(--blue) }
+  .entry.recv { background:#14532d22; border-left-color:var(--green) }
+  .entry.recv .arrow { color:var(--green) }
+  .entry.info { background:#713f1218; border-left-color:var(--yellow) }
+  .entry.handshake { background:#1e3a8a33; border-left-color:var(--blue) }
+  .entry.server { background:#4a044e22; border-left-color:var(--purple) }
+  .entry.error { background:#7f1d1d30; border-left-color:var(--red) }
+  .empty { color:var(--dim); text-align:center; margin-top:50px; font-size:14px }
+</style>
+</head>
+<body>
+
+<aside>
+  <details class="help" open>
+    <summary>使用说明</summary>
+    <ol>
+      <li>准备后端：redis / mysql → <code>world</code>（注册玩家，写入 Redis <code>player:&lt;name&gt;</code>）→ <code>agent</code> → <code>game</code></li>
+      <li>填写玩家名 → 点「生成 JWT」（密钥与 game 的 <code>TokenSecret</code> 一致，默认 shared-secret-key）</li>
+      <li>连接 → 自动握手（发送 <code>{"token","version"}</code>）→ 收到 <code>{"status":"ok"}</code></li>
+      <li>自动发送登录 <code>CmdLogin</code>，可手动重发 / 心跳 / 自定义消息</li>
+      <li>新增协议：在脚本 <code>CMDS</code> / <code>BODY_SCHEMAS</code> 登记即可复用本页测试</li>
+    </ol>
+  </details>
+
+  <h2>连接设置</h2>
+  <section>
+    <div class="row">
+      <div style="flex:2"><label>Host</label><input id="host" value="127.0.0.1"></div>
+      <div style="flex:1"><label>Port</label><input id="port" value="8889"></div>
+    </div>
+    <div><label>路径</label><input id="path" value="/ws"></div>
+    <button id="btnConn" class="btn-connect" onclick="toggleConnect()">连接</button>
+    <div id="status" class="status off">未连接</div>
+  </section>
+
+  <h2>Token / 握手</h2>
+  <section>
+    <div class="row">
+      <div><label>玩家名 (sub)</label><input id="playerName" value="test_player"></div>
+      <div><label>签名密钥</label><input id="tokenSecret" value="shared-secret-key"></div>
+    </div>
+    <button class="btn-primary" onclick="generateJWT()">生成 JWT（HS256）</button>
+    <div class="token-box"><label>Token（也可直接粘贴 world 签发）</label><textarea id="tokenArea"></textarea></div>
+    <label class="chk"><input type="checkbox" id="chkAutoHandshake" checked> 连接后自动握手</label>
+    <div id="hsStatus" class="status off">未握手</div>
+  </section>
+
+  <h2>登录</h2>
+  <section>
+    <div class="row">
+      <div><label>UID</label><input id="uid" value="12312312" type="number"></div>
+      <div><label>Name</label><input id="name" value="test_player"></div>
+    </div>
+    <div><label>PassWord</label><input id="password" value="123"></div>
+    <div class="row">
+      <label class="chk"><input type="checkbox" id="chkAutoLogin" checked> 握手后自动登录</label>
+      <label class="chk"><input type="checkbox" id="chkLoginToken" checked> 登录头带 token</label>
+    </div>
+    <button class="btn-primary" onclick="sendLogin()">发送登录 CmdLogin</button>
+  </section>
+
+  <h2>心跳</h2>
+  <section>
+    <div class="row">
+      <button class="btn-heart" onclick="sendHeartbeat()">发送心跳</button>
+      <button id="btnAutoHb" class="btn-plain" onclick="toggleAutoHb()">自动心跳: 关</button>
+    </div>
+  </section>
+
+  <h2>自定义消息（复用）</h2>
+  <section>
+    <div class="row">
+      <div><label>类型</label>
+        <select id="msgTypeSel">
+          <option value="1">1 Req 请求</option>
+          <option value="2">2 Rsp 响应</option>
+          <option value="3">3 Push 推送</option>
+        </select>
+      </div>
+      <div><label>命令号</label>
+        <select id="cmdSel"></select>
+      </div>
+    </div>
+    <div class="row">
+      <div><label>cmd (数字)</label><input id="cmdNum" value="1" type="number"></div>
+      <div><label>msgID</label><input id="custMsgID" value="1" type="number"></div>
+      <div><label>UID</label><input id="custUID" value="12312312" type="number"></div>
+    </div>
+    <div><label>Token（可选）</label><input id="custToken"></div>
+    <div class="field-label">
+      <label>Body（JSON 或 HEX）</label>
+      <span class="hint">
+        <label class="chk" style="display:inline-flex"><input type="radio" name="bodyMode" id="bodyModeJson" checked> JSON</label>
+        <label class="chk" style="display:inline-flex"><input type="radio" name="bodyMode" id="bodyModeHex"> HEX</label>
+      </span>
+    </div>
+    <textarea id="bodyJson" spellcheck="false"></textarea>
+    <input id="bodyHex" placeholder="如 08 01 12 03 61 62 63" style="display:none">
+    <button class="btn-primary" onclick="sendCustom()">发送自定义消息</button>
+  </section>
+
+  <h2>预设</h2>
+  <section class="preset-btns">
+    <button onclick="presetLogin('player_001')">player_001 登录</button>
+    <button onclick="presetLogin('player_002')">player_002 登录</button>
+    <button onclick="presetLogin('player_003')">player_003 登录</button>
+    <button onclick="sendHeartbeat()">心跳 ×1</button>
+    <button onclick="heartbeatN(3)">心跳 ×3</button>
+  </section>
+
+  <button class="btn-ghost" onclick="clearLog()">清空日志</button>
+</aside>
+
+<main>
+  <div class="main-head">
+    <h2>消息日志</h2>
+    <div class="stats">
+      <span class="s-sent">发送 <b id="statSent">0</b></span>
+      <span class="s-recv">接收 <b id="statRecv">0</b></span>
+      <span class="s-pend">待响应 <b id="statPend">0</b></span>
+    </div>
+    <div class="filters">
+      <label class="on"><input type="checkbox" data-filter="sent" checked> 发送</label>
+      <label class="on"><input type="checkbox" data-filter="recv" checked> 接收</label>
+      <label class="on"><input type="checkbox" data-filter="sys" checked> 系统</label>
+      <label class="on"><input type="checkbox" data-filter="error" checked> 错误</label>
+    </div>
+  </div>
+  <div class="log-list" id="logList">
+    <div class="empty">等待消息…</div>
+  </div>
+</main>
+
+<script>
+"use strict";
+
+// ═══════════ 编解码核心（无 DOM 依赖，可被 node 单测引用） ═══════════
+
+const te = new TextEncoder();
+const td = new TextDecoder('utf-8', { fatal: true });
+
+function concatBytes(parts) {
+  let total = 0;
+  for (const p of parts) total += p.length;
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) { out.set(p, off); off += p.length; }
+  return out;
+}
+
+// LEB128 无符号 varint（与 Go protowire.AppendVarint 一致）
+function varintBytes(n) {
+  n = Math.trunc(n);
+  if (!Number.isFinite(n) || n < 0) throw new Error('varint 不支持的值: ' + n);
+  const out = [];
+  while (n >= 0x80) {
+    out.push((n & 0x7f) | 0x80);
+    n = Math.floor(n / 128);
+  }
+  out.push(n);
+  return Uint8Array.from(out);
+}
+
+function readVarint(u8, pos) {
+  let value = 0, shift = 0;
+  for (let i = 0; i < 10; i++) {
+    if (pos + i >= u8.length) throw new Error('varint 数据截断');
+    const b = u8[pos + i];
+    value += (b & 0x7f) * Math.pow(2, shift);
+    if ((b & 0x80) === 0) return { value, pos: pos + i + 1 };
+    shift += 7;
+  }
+  throw new Error('varint 超过 10 字节');
+}
+
+function tagBytes(field, wire) { return varintBytes((field << 3) | wire); }
+function bytesField(u8) { return concatBytes([varintBytes(u8.length), u8]); }
+function strFieldBytes(s) { return bytesField(te.encode(s)); }
+
+function readBytes(u8, pos) {
+  const len = readVarint(u8, pos);
+  const end = len.pos + len.value;
+  if (end > u8.length) throw new Error('bytes 数据截断');
+  return { bytes: u8.slice(len.pos, end), pos: end };
+}
+
+function readString(u8, pos) {
+  const r = readBytes(u8, pos);
+  return { value: td.decode(r.bytes), pos: r.pos };
+}
+
+function skipField(u8, pos, wire) {
+  if (wire === 0) return readVarint(u8, pos).pos;
+  if (wire === 1) { if (pos + 8 > u8.length) throw new Error('fixed64 截断'); return pos + 8; }
+  if (wire === 2) return readBytes(u8, pos).pos;
+  if (wire === 5) { if (pos + 4 > u8.length) throw new Error('fixed32 截断'); return pos + 4; }
+  throw new Error('未知 wire type: ' + wire);
+}
+
+// 信封 Msg：1=msg_type(varint) 2=msg_id(varint) 3=uid(varint)
+//           4=token(string) 5=cmd(varint) 6=body(bytes)
+function encodeMsg(m) {
+  const parts = [];
+  if (m.msgType) parts.push(tagBytes(1, 0), varintBytes(m.msgType));
+  if (m.msgID) parts.push(tagBytes(2, 0), varintBytes(m.msgID));
+  if (m.uid) parts.push(tagBytes(3, 0), varintBytes(m.uid));
+  if (m.token) parts.push(tagBytes(4, 2), strFieldBytes(m.token));
+  if (m.cmd) parts.push(tagBytes(5, 0), varintBytes(m.cmd));
+  if (m.body && m.body.length) parts.push(tagBytes(6, 2), bytesField(m.body));
+  return concatBytes(parts);
+}
+
+function decodeMsg(u8) {
+  const m = { msgType: 0, msgID: 0, uid: 0, token: '', cmd: 0, body: new Uint8Array(0) };
+  let pos = 0;
+  while (pos < u8.length) {
+    const tag = readVarint(u8, pos);
+    pos = tag.pos;
+    const field = Math.floor(tag.value / 8);
+    const wire = tag.value % 8;
+    switch (field) {
+      case 1: {
+        if (wire !== 0) throw new Error('字段1 期望 varint');
+        const v = readVarint(u8, pos); pos = v.pos; m.msgType = v.value; break;
+      }
+      case 2: {
+        if (wire !== 0) throw new Error('字段2 期望 varint');
+        const v = readVarint(u8, pos); pos = v.pos; m.msgID = v.value; break;
+      }
+      case 3: {
+        if (wire !== 0) throw new Error('字段3 期望 varint');
+        const v = readVarint(u8, pos); pos = v.pos; m.uid = v.value; break;
+      }
+      case 4: {
+        if (wire !== 2) throw new Error('字段4 期望 string');
+        const v = readString(u8, pos); pos = v.pos; m.token = v.value; break;
+      }
+      case 5: {
+        if (wire !== 0) throw new Error('字段5 期望 varint');
+        const v = readVarint(u8, pos); pos = v.pos; m.cmd = v.value; break;
+      }
+      case 6: {
+        if (wire !== 2) throw new Error('字段6 期望 bytes');
+        const v = readBytes(u8, pos); pos = v.pos; m.body = v.bytes; break;
+      }
+      default: pos = skipField(u8, pos, wire);
+    }
+  }
+  return m;
+}
+
+// 业务消息体字段表：字段名 → 字段号 / 类型
+const BODY_SCHEMAS = {
+  LoginReq: { fields: [['UUid', 1, 'int64'], ['Name', 2, 'string'], ['PassWord', 3, 'string']] },
+  LoginRes: { fields: [['UUid', 1, 'int64'], ['Code', 2, 'int32']] },
+  HeartReq: { fields: [] },
+  HeartRes: { fields: [['Time', 1, 'int64']] },
+  ErrorRes: { fields: [['Code', 1, 'int32'], ['Msg', 2, 'string']] },
+};
+
+function encodeBody(typeName, obj) {
+  const spec = BODY_SCHEMAS[typeName];
+  if (!spec) throw new Error('未知消息体类型: ' + typeName);
+  const parts = [];
+  for (const [key, fld, typ] of spec.fields) {
+    const v = obj[key];
+    if (v === undefined || v === null || v === '') continue;
+    if (typ === 'string') {
+      parts.push(tagBytes(fld, 2), strFieldBytes(String(v)));
+    } else {
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 0) throw new Error('字段 ' + key + ' 不是合法非负整数: ' + v);
+      parts.push(tagBytes(fld, 0), varintBytes(n));
+    }
+  }
+  return concatBytes(parts);
+}
+
+function decodeBody(typeName, u8) {
+  const spec = BODY_SCHEMAS[typeName];
+  if (!spec) throw new Error('未知消息体类型: ' + typeName);
+  const out = {};
+  let pos = 0;
+  while (pos < u8.length) {
+    const tag = readVarint(u8, pos);
+    pos = tag.pos;
+    const field = Math.floor(tag.value / 8);
+    const wire = tag.value % 8;
+    const fld = spec.fields.find(f => f[1] === field);
+    if (!fld) { pos = skipField(u8, pos, wire); continue; }
+    const [key, , typ] = fld;
+    if (typ === 'string') {
+      if (wire !== 2) throw new Error('字段 ' + field + ' 期望 string');
+      const v = readString(u8, pos); pos = v.pos; out[key] = v.value;
+    } else {
+      if (wire !== 0) throw new Error('字段 ' + field + ' 期望 varint');
+      const v = readVarint(u8, pos); pos = v.pos; out[key] = v.value;
+    }
+  }
+  return out;
+}
+
+// 命令号登记表：新增协议在这里加一行即可复用
+const CMDS = [
+  { cmd: 1, name: 'CmdLogin', req: 'LoginReq', rsp: 'LoginRes' },
+  { cmd: 2, name: 'CmdLoginRsp', req: null, rsp: 'LoginRes' },
+  { cmd: 3, name: 'CmdHeart', req: 'HeartReq', rsp: 'HeartRes' },
+  { cmd: 4, name: 'CmdHeartRsp', req: null, rsp: 'HeartRes' },
+  { cmd: 0xffff, name: 'CmdError', req: null, rsp: 'ErrorRes' },
+];
+const TYPE_NAMES = { 1: 'Req', 2: 'Rsp', 3: 'Push' };
+
+function cmdName(cmd) {
+  const c = CMDS.find(x => x.cmd === cmd);
+  return c ? c.name : 'Cmd_' + cmd;
+}
+function bodyTypeFor(cmd, msgType) {
+  const c = CMDS.find(x => x.cmd === cmd);
+  if (!c) return null;
+  return msgType === 2 ? c.rsp : (msgType === 1 ? c.req : (c.rsp || c.req));
+}
+
+function hexStr(u8) {
+  if (!u8 || !u8.length) return '(空)';
+  return Array.from(u8).map(b => b.toString(16).padStart(2, '0')).join(' ');
+}
+
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ═══════════ UI 与连接逻辑 ═══════════
+
+const $ = id => document.getElementById(id);
+const logList = $('logList');
+const hostEl = $('host'), portEl = $('port'), pathEl = $('path');
+const btnConn = $('btnConn'), statusEl = $('status'), hsStatus = $('hsStatus');
+const playerName = $('playerName'), tokenSecret = $('tokenSecret'), tokenEl = $('tokenArea');
+const uidEl = $('uid'), nameEl = $('name'), passEl = $('password');
+const chkAutoHandshake = $('chkAutoHandshake'), chkAutoLogin = $('chkAutoLogin'), chkLoginToken = $('chkLoginToken');
+const btnAutoHb = $('btnAutoHb');
+const msgTypeSel = $('msgTypeSel'), cmdSel = $('cmdSel'), cmdNum = $('cmdNum');
+const custMsgID = $('custMsgID'), custUID = $('custUID'), custToken = $('custToken');
+const bodyJson = $('bodyJson'), bodyHex = $('bodyHex');
+const bodyModeJson = $('bodyModeJson'), bodyModeHex = $('bodyModeHex');
+
+let ws = null;
+let connected = false;
+let handshakeDone = false;
+let seq = 0;
+let sentCount = 0;
+let recvCount = 0;
+let autoHbTimer = null;
+const pending = new Map(); // msgID -> 请求命令名
+
+const SAMPLES = {
+  LoginReq: { UUid: 12312312, Name: 'test_player', PassWord: '123' },
+  LoginRes: { UUid: 12312312, Code: 0 },
+  HeartReq: {},
+  HeartRes: { Time: 0 },
+  ErrorRes: { Code: 1, Msg: 'error message' },
+};
+
+function nextMsgID() { return ++seq; }
+
+// ── 日志 ──
+function addLog(kind, html) {
+  const empty = logList.querySelector('.empty');
+  if (empty) empty.remove();
+  const div = document.createElement('div');
+  div.className = 'entry ' + kind;
+  div.dataset.k = (kind === 'sent' || kind === 'recv' || kind === 'error') ? kind : 'sys';
+  const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  div.innerHTML = '<span class="ts">' + ts + '</span>' + html;
+  logList.appendChild(div);
+  logList.scrollTop = logList.scrollHeight;
+  applyFilter();
+}
+
+function fmtMsg(m, dir, label, matchText) {
+  const tname = TYPE_NAMES[m.msgType] || ('Type' + m.msgType);
+  const arrow = dir === 'sent' ? '↑' : '↓';
+  const btype = bodyTypeFor(m.cmd, m.msgType);
+  let bodyHtml = '';
+  if (btype) {
+    try {
+      const obj = decodeBody(btype, m.body);
+      bodyHtml = '<div class="kv">body（' + btype + '）: ' + esc(JSON.stringify(obj)) + '</div>';
+    } catch (e) {
+      bodyHtml = '<div class="kv err-text">body 解码失败: ' + esc(e.message) + '</div>';
+    }
+  } else if (m.body.length) {
+    bodyHtml = '<div class="kv err-text">该命令未登记消息体类型，仅显示 HEX</div>';
+  }
+  const labelHtml = label ? ' <span class="label">' + esc(label) + '</span>' : '';
+  const matchHtml = matchText ? ' <span class="match">✓ ' + esc(matchText) + '</span>' : '';
+  const tokenHtml = m.token ? ' token=<b>' + esc(m.token) + '</b>' : '';
+  return '<span class="arrow">' + arrow + '</span><b>' + (dir === 'sent' ? '发送' : '收到') + '</b>' + labelHtml +
+    ' <span class="pill t' + m.msgType + '">' + tname + '</span>' +
+    ' <span class="cmd">' + esc(cmdName(m.cmd)) + '(' + m.cmd + ')</span>' +
+    ' msgID=<b>' + m.msgID + '</b> uid=<b>' + m.uid + '</b>' + tokenHtml +
+    ' 字节=<b>' + m.body.length + '</b>' + matchHtml +
+    '<details><summary>详情 / HEX</summary>' +
+    bodyHtml +
+    '<div class="kv hex">' + esc(hexStr(m.body)) + '</div>' +
+    '</details>';
+}
+
+function applyFilter() {
+  const checked = {};
+  document.querySelectorAll('.filters input[type=checkbox]').forEach(cb => { checked[cb.dataset.filter] = cb.checked; });
+  logList.querySelectorAll('.entry').forEach(el => {
+    el.style.display = checked[el.dataset.k] ? '' : 'none';
+  });
+}
+
+function updateStats() {
+  $('statSent').textContent = sentCount;
+  $('statRecv').textContent = recvCount;
+  $('statPend').textContent = pending.size;
+}
+
+function clearLog() {
+  logList.innerHTML = '<div class="empty">等待消息…</div>';
+  sentCount = 0; recvCount = 0; pending.clear();
+  updateStats();
+}
+
+// ── 连接 ──
+function toggleConnect() { connected ? disconnect() : connect(); }
+
+function connect() {
+  const host = hostEl.value.trim() || '127.0.0.1';
+  const port = portEl.value.trim() || '8889';
+  const path = pathEl.value.trim() || '/ws';
+  const url = 'ws://' + host + ':' + port + path;
+  addLog('info', '正在连接 ' + esc(url) + ' ...');
+  try {
+    ws = new WebSocket(url);
+  } catch (e) {
+    addLog('error', '创建连接失败: ' + esc(e.message));
+    return;
+  }
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => {
+    connected = true;
+    handshakeDone = false;
+    updateUI();
+    addLog('info', '已连接到 ' + esc(url));
+    if (chkAutoHandshake.checked) setTimeout(sendHandshake, 100);
+  };
+  ws.onmessage = async ev => {
+    if (typeof ev.data === 'string') { handleTextFrame(ev.data); return; }
+    let buf;
+    if (ev.data instanceof ArrayBuffer) buf = ev.data;
+    else if (ev.data instanceof Blob) buf = await ev.data.arrayBuffer();
+    else buf = ev.data;
+    handleBinaryFrame(new Uint8Array(buf));
+  };
+  ws.onerror = () => addLog('error', 'WebSocket 错误');
+  ws.onclose = ev => {
+    connected = false;
+    handshakeDone = false;
+    stopAutoHb();
+    updateUI();
+    addLog('info', '连接已关闭 (code=' + ev.code + ')');
+    ws = null;
+  };
+}
+
+function disconnect() {
+  stopAutoHb();
+  if (ws) { ws.close(1000, '用户主动断开'); ws = null; }
+  connected = false;
+  handshakeDone = false;
+  updateUI();
+}
+
+function updateUI() {
+  if (connected) {
+    btnConn.textContent = '断开';
+    btnConn.classList.add('connected');
+    statusEl.textContent = '已连接';
+    statusEl.className = 'status on';
+  } else {
+    btnConn.textContent = '连接';
+    btnConn.classList.remove('connected');
+    statusEl.textContent = '未连接';
+    statusEl.className = 'status off';
+  }
+  if (handshakeDone) {
+    hsStatus.textContent = '握手成功';
+    hsStatus.className = 'status on';
+  } else {
+    hsStatus.textContent = '未握手';
+    hsStatus.className = 'status off';
+  }
+}
+
+// ── 收帧 ──
+function handleTextFrame(text) {
+  addLog('server', '服务端文本打印: ' + esc(text));
+}
+
+function handleBinaryFrame(u8) {
+  recvCount++;
+  updateStats();
+  // 1) 握手 / 系统 JSON（agent 用二进制帧转发 {"status":"ok"}）
+  try {
+    const txt = td.decode(u8);
+    const obj = JSON.parse(txt);
+    if (obj && typeof obj === 'object' && obj.status) {
+      if (obj.status === 'ok') {
+        handshakeDone = true;
+        updateUI();
+        addLog('handshake', '握手成功: ' + esc(txt));
+        if (chkAutoLogin.checked) setTimeout(sendLogin, 200);
+      } else {
+        addLog('error', '握手失败: ' + esc(txt));
+      }
+      return;
+    }
+    addLog('server', '服务器 JSON 消息: ' + esc(txt));
+    return;
+  } catch (_) { /* 不是 JSON，按协议信封解析 */ }
+  // 2) 协议信封 Msg
+  try {
+    const m = decodeMsg(u8);
+    let matchText = '';
+    if (m.msgType === 2 && pending.has(m.msgID)) {
+      matchText = '响应 ' + pending.get(m.msgID) + ' (msgID=' + m.msgID + ')';
+      pending.delete(m.msgID);
+    }
+    addLog('recv', fmtMsg(m, 'recv', null, matchText));
+    updateStats();
+  } catch (e) {
+    addLog('error', '协议帧解析失败: ' + esc(e.message) +
+      '<div class="kv hex">' + esc(hexStr(u8)) + '</div>');
+  }
+}
+
+// ── 发送 ──
+function sendHandshake() {
+  if (!connected || !ws) { addLog('error', '未连接'); return; }
+  const token = tokenEl.value.trim();
+  if (!token) {
+    addLog('error', 'Token 为空：先「生成 JWT」或粘贴 world 签发的 token');
+    return;
+  }
+  const json = JSON.stringify({ token: token, version: 1 });
+  ws.send(json);
+  addLog('sent', '握手: ' + esc(json));
+}
+
+function sendMsg(m, label) {
+  if (!connected || !ws) { addLog('error', '未连接，无法发送'); return; }
+  let bytes;
+  try { bytes = encodeMsg(m); } catch (e) { addLog('error', '编码失败: ' + esc(e.message)); return; }
+  ws.send(bytes);
+  sentCount++;
+  if (m.msgType === 1) pending.set(m.msgID, cmdName(m.cmd));
+  addLog('sent', fmtMsg(m, 'sent', label));
+  updateStats();
+}
+
+function sendLogin() {
+  const uid = parseInt(uidEl.value) || 12312312;
+  let body;
+  try {
+    body = encodeBody('LoginReq', {
+      UUid: uid,
+      Name: nameEl.value.trim() || 'test_player',
+      PassWord: passEl.value.trim() || '123',
+    });
+  } catch (e) { addLog('error', '登录 body 编码失败: ' + esc(e.message)); return; }
+  sendMsg({
+    msgType: 1,
+    msgID: nextMsgID(),
+    uid: uid,
+    token: chkLoginToken.checked ? tokenEl.value.trim() : '',
+    cmd: 1,
+    body: body,
+  }, '登录');
+}
+
+function sendHeartbeat() {
+  const uid = parseInt(uidEl.value) || 12312312;
+  sendMsg({
+    msgType: 1,
+    msgID: nextMsgID(),
+    uid: uid,
+    token: '',
+    cmd: 3,
+    body: new Uint8Array(0),
+  }, '心跳');
+}
+
+function sendCustom() {
+  const msgType = parseInt(msgTypeSel.value) || 1;
+  const cmd = parseInt(cmdNum.value);
+  if (!Number.isFinite(cmd) || cmd < 0) { addLog('error', '命令号非法'); return; }
+  const uid = parseInt(custUID.value) || 0;
+  const msgID = parseInt(custMsgID.value) || nextMsgID();
+  let body;
+  try {
+    if (bodyModeHex.checked) {
+      body = parseHex(bodyHex.value);
+    } else {
+      const obj = JSON.parse(bodyJson.value || '{}');
+      const btype = bodyTypeFor(cmd, msgType) || 'HeartReq';
+      body = encodeBody(btype, obj);
+    }
+  } catch (e) { addLog('error', 'body 处理失败: ' + esc(e.message)); return; }
+  sendMsg({ msgType, msgID, uid, token: custToken.value.trim(), cmd, body }, '自定义');
+}
+
+function parseHex(s) {
+  const clean = s.replace(/[\s,]+/g, '');
+  if (!clean) return new Uint8Array(0);
+  if (!/^[0-9a-fA-F]+$/.test(clean) || clean.length % 2 !== 0) {
+    throw new Error('HEX 格式非法（需偶数个十六进制字符）');
+  }
+  const out = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.substr(i * 2, 2), 16);
+  return out;
+}
+
+// ── 心跳自动发送 ──
+function toggleAutoHb() { autoHbTimer ? stopAutoHb() : startAutoHb(); }
+function startAutoHb() {
+  autoHbTimer = setInterval(sendHeartbeat, 3000);
+  btnAutoHb.textContent = '自动心跳: 开';
+  btnAutoHb.style.background = 'var(--green)';
+  btnAutoHb.style.color = '#06240f';
+  sendHeartbeat();
+  addLog('info', '自动心跳已开启（3s 间隔）');
+}
+function stopAutoHb() {
+  if (autoHbTimer) { clearInterval(autoHbTimer); autoHbTimer = null; }
+  btnAutoHb.textContent = '自动心跳: 关';
+  btnAutoHb.style.background = 'var(--panel2)';
+  btnAutoHb.style.color = 'var(--text)';
+}
+function heartbeatN(n) {
+  for (let i = 0; i < n; i++) setTimeout(sendHeartbeat, i * 200);
+}
+
+// ── Token 生成 ──
+function b64url(u8) {
+  let s = '';
+  for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function generateJWT() {
+  const sub = playerName.value.trim();
+  const secret = tokenSecret.value.trim();
+  if (!sub) { addLog('error', '请先填写玩家名（JWT 的 sub）'); return; }
+  if (!secret) { addLog('error', '请填写签名密钥（与 game TokenSecret 一致）'); return; }
+  if (!window.crypto || !crypto.subtle) {
+    addLog('error', '当前环境不支持 Web Crypto：请用 https / localhost / file:// 打开本页');
+    return;
+  }
+  try {
+    const header = b64url(te.encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' })));
+    const payload = b64url(te.encode(JSON.stringify({ sub: sub })));
+    const data = header + '.' + payload;
+    const key = await crypto.subtle.importKey('raw', te.encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, te.encode(data)));
+    tokenEl.value = data + '.' + b64url(sig);
+    addLog('info', '已生成 HS256 JWT（sub=' + esc(sub) + '），可用作握手 token');
+  } catch (e) {
+    addLog('error', '生成 token 失败: ' + esc(e.message));
+  }
+}
+
+// ── 预设 / 自定义消息辅助 ──
+function presetLogin(name) {
+  nameEl.value = name;
+  playerName.value = name;
+  sendLogin();
+}
+
+function loadSample(btype) {
+  if (SAMPLES[btype]) bodyJson.value = JSON.stringify(SAMPLES[btype], null, 2);
+}
+
+function onCmdSelect() {
+  const val = parseInt(cmdSel.value);
+  if (!Number.isFinite(val)) return;
+  cmdNum.value = val;
+  const c = CMDS.find(x => x.cmd === val);
+  if (!c) return;
+  if (c.req && !c.rsp) msgTypeSel.value = '1';
+  const btype = c.req || c.rsp;
+  if (btype) loadSample(btype);
+}
+
+function toggleBodyMode() {
+  bodyJson.style.display = bodyModeJson.checked ? '' : 'none';
+  bodyHex.style.display = bodyModeHex.checked ? '' : 'none';
+}
+
+// ── 初始化 ──
+function init() {
+  for (const c of CMDS) {
+    const opt = document.createElement('option');
+    opt.value = c.cmd;
+    opt.textContent = c.name + ' (' + c.cmd + ')';
+    cmdSel.appendChild(opt);
+  }
+  onCmdSelect();
+  toggleBodyMode();
+  bodyModeJson.addEventListener('change', toggleBodyMode);
+  bodyModeHex.addEventListener('change', toggleBodyMode);
+  document.querySelectorAll('.filters input[type=checkbox]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      cb.closest('label').classList.toggle('on', cb.checked);
+      applyFilter();
+    });
+  });
+  updateUI();
+  updateStats();
+}
+
+init();
+</script>
+</body>
+</html>
