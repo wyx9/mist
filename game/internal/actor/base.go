@@ -113,9 +113,9 @@ type ActorConfig = struct {
 
 // DefaultConfig 默认配置，当没有提供自定义配置时使用
 var DefaultConfig = ActorConfig{
-	QueueSize:      1024,            // 默认队列大小1024
-	SendTimeout:    5 * time.Second, // 默认发送超时5秒
-	HandlerTimeout: 5 * time.Second, // 默认处理超时5秒
+	QueueSize:      1024,             // 默认队列大小1024
+	SendTimeout:    5 * time.Second,  // 默认发送超时5秒
+	HandlerTimeout: 30 * time.Second, // 默认处理超时30秒（超时视为 actor 故障）
 }
 
 // ActorBase Actor基础结构体，提供Actor的基本功能实现
@@ -224,6 +224,11 @@ func (ac *ActorBase) handleEnvelope(env *Envelope) {
 	case <-handleCtx.Done():
 		logger.ERROR("message handling timed out for actor ,", ac.name)
 		replyCallError(env, ctx, "handler timeout")
+		// 超时视为 actor 故障：自停循环，并通知 gameserver 踢掉该玩家连接
+		ac.cancel()
+		if ac.manager != nil {
+			ac.manager.notifyFault(ac.name)
+		}
 	}
 }
 
