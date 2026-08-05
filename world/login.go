@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"github.com/go-redis/redis/v8"
 	"github.com/jmoiron/sqlx"
 
+	"simple_game/game/pkg/registry"
 	"simple_game/game/pkg/uid"
 )
 
@@ -19,7 +21,6 @@ type loginHandler struct {
 	db          *sqlx.DB
 	rdb         *redis.Client
 	agentAddr   string
-	gameAddr    string
 	tokenSecret []byte
 	tokenExpire time.Duration
 }
@@ -60,8 +61,19 @@ func (h *loginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 从注册表选一个可用 game
+	games, err := registry.ListFresh(context.Background(), h.rdb)
+	if err != nil {
+		http.Error(w, "list game servers failed", http.StatusInternalServerError)
+		return
+	}
+	if len(games) == 0 {
+		http.Error(w, "no game server available", http.StatusServiceUnavailable)
+		return
+	}
+
 	// 写 Redis 注册信息
-	if err := registerPlayer(h.rdb, req.Name, h.agentAddr, h.gameAddr, h.tokenExpire); err != nil {
+	if err := registerPlayer(h.rdb, req.Name, h.agentAddr, games[0], h.tokenExpire); err != nil {
 		http.Error(w, "register player failed", http.StatusInternalServerError)
 		return
 	}

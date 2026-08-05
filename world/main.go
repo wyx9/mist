@@ -87,9 +87,7 @@ func main() {
 
 	// 启动
 	addr := fmt.Sprintf("%s:%s", cfg.Http.Addr, cfg.Http.Port)
-	go startWorld(addr, mysql.DB, rdb, cfg.AgentAddr,
-		fmt.Sprintf("%s:%s", cfg.Http.Addr, "9900"), // gameAddr 默认
-		cfg.TokenSecret, tokenExpire)
+	go startWorld(addr, mysql.DB, rdb, cfg.AgentAddr, cfg.TokenSecret, tokenExpire)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)

@@ -106,9 +106,9 @@
   <details class="help" open>
     <summary>使用说明</summary>
     <ol>
-      <li>准备后端：redis / mysql → <code>world</code>（注册玩家，写入 Redis <code>player:&lt;name&gt;</code>）→ <code>agent</code> → <code>game</code></li>
-      <li>填写玩家名 → 点「生成 JWT」（密钥与 game 的 <code>TokenSecret</code> 一致，默认 shared-secret-key）</li>
-      <li>连接 → 自动握手（发送 <code>{"token","version"}</code>）→ 收到 <code>{"status":"ok"}</code></li>
+      <li>准备后端：redis / mysql → <code>world</code> → <code>agent</code> → <code>game</code></li>
+      <li>填写玩家名 / 密码 → 点「登录 World」→ 自动拿到 token 并填入 agent 地址</li>
+      <li>点「连接」→ 自动握手（发送 <code>{"token","version"}</code>）→ 收到 <code>{"status":"ok"}</code></li>
       <li>自动发送登录 <code>CmdLogin</code>，可手动重发 / 心跳 / 自定义消息</li>
       <li>新增协议：在脚本 <code>CMDS</code> / <code>BODY_SCHEMAS</code> 登记即可复用本页测试</li>
     </ol>
@@ -125,14 +125,18 @@
     <div id="status" class="status off">未连接</div>
   </section>
 
-  <h2>Token / 握手</h2>
+  <h2>World 登录 / 握手</h2>
   <section>
     <div class="row">
-      <div><label>玩家名 (sub)</label><input id="playerName" value="test_player"></div>
-      <div><label>签名密钥</label><input id="tokenSecret" value="shared-secret-key"></div>
+      <div><label>World Host</label><input id="worldHost" value="127.0.0.1"></div>
+      <div><label>World Port</label><input id="worldPort" value="9902"></div>
     </div>
-    <button class="btn-primary" onclick="generateJWT()">生成 JWT（HS256）</button>
-    <div class="token-box"><label>Token（也可直接粘贴 world 签发）</label><textarea id="tokenArea"></textarea></div>
+    <div class="row">
+      <div><label>玩家名</label><input id="playerName" value="test_player"></div>
+      <div><label>密码</label><input id="password" value="123"></div>
+    </div>
+    <button class="btn-primary" onclick="worldLogin()">登录 World（获取 Token）</button>
+    <div class="token-box"><label>Token（world 签发，可手动粘贴）</label><textarea id="tokenArea"></textarea></div>
     <label class="chk"><input type="checkbox" id="chkAutoHandshake" checked> 连接后自动握手</label>
     <div id="hsStatus" class="status off">未握手</div>
   </section>
@@ -143,10 +147,8 @@
       <div><label>UID</label><input id="uid" value="12312312" type="number"></div>
       <div><label>Name</label><input id="name" value="test_player"></div>
     </div>
-    <div><label>PassWord</label><input id="password" value="123"></div>
     <div class="row">
       <label class="chk"><input type="checkbox" id="chkAutoLogin" checked> 握手后自动登录</label>
-      <label class="chk"><input type="checkbox" id="chkLoginToken" checked> 登录头带 token</label>
     </div>
     <button class="btn-primary" onclick="sendLogin()">发送登录 CmdLogin</button>
   </section>
@@ -155,7 +157,7 @@
   <section>
     <div class="row">
       <button class="btn-heart" onclick="sendHeartbeat()">发送心跳</button>
-      <button id="btnAutoHb" class="btn-plain" onclick="toggleAutoHb()">自动心跳: 关</button>
+      <button id="btnAutoHb" class="btn-plain" onclick="toggleAutoHb()">自动心跳: 开</button>
     </div>
   </section>
 
@@ -178,7 +180,6 @@
       <div><label>msgID</label><input id="custMsgID" value="1" type="number"></div>
       <div><label>UID</label><input id="custUID" value="12312312" type="number"></div>
     </div>
-    <div><label>Token（可选）</label><input id="custToken"></div>
     <div class="field-label">
       <label>Body（JSON 或 HEX）</label>
       <span class="hint">
@@ -427,12 +428,13 @@ const $ = id => document.getElementById(id);
 const logList = $('logList');
 const hostEl = $('host'), portEl = $('port'), pathEl = $('path');
 const btnConn = $('btnConn'), statusEl = $('status'), hsStatus = $('hsStatus');
-const playerName = $('playerName'), tokenSecret = $('tokenSecret'), tokenEl = $('tokenArea');
+const worldHost = $('worldHost'), worldPort = $('worldPort');
+const playerName = $('playerName'), tokenEl = $('tokenArea');
 const uidEl = $('uid'), nameEl = $('name'), passEl = $('password');
-const chkAutoHandshake = $('chkAutoHandshake'), chkAutoLogin = $('chkAutoLogin'), chkLoginToken = $('chkLoginToken');
+const chkAutoHandshake = $('chkAutoHandshake'), chkAutoLogin = $('chkAutoLogin');
 const btnAutoHb = $('btnAutoHb');
 const msgTypeSel = $('msgTypeSel'), cmdSel = $('cmdSel'), cmdNum = $('cmdNum');
-const custMsgID = $('custMsgID'), custUID = $('custUID'), custToken = $('custToken');
+const custMsgID = $('custMsgID'), custUID = $('custUID');
 const bodyJson = $('bodyJson'), bodyHex = $('bodyHex');
 const bodyModeJson = $('bodyModeJson'), bodyModeHex = $('bodyModeHex');
 
@@ -669,7 +671,6 @@ function sendLogin() {
     msgType: 1,
     msgID: nextMsgID(),
     uid: uid,
-    token: chkLoginToken.checked ? tokenEl.value.trim() : '',
     cmd: 1,
     body: body,
   }, '登录');
@@ -703,7 +704,7 @@ function sendCustom() {
       body = encodeBody(btype, obj);
     }
   } catch (e) { addLog('error', 'body 处理失败: ' + esc(e.message)); return; }
-  sendMsg({ msgType, msgID, uid, token: custToken.value.trim(), cmd, body }, '自定义');
+  sendMsg({ msgType, msgID, uid, cmd, body }, '自定义');
 }
 
 function parseHex(s) {
@@ -737,33 +738,62 @@ function heartbeatN(n) {
   for (let i = 0; i < n; i++) setTimeout(sendHeartbeat, i * 200);
 }
 
-// ── Token 生成 ──
-function b64url(u8) {
-  let s = '';
-  for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]);
-  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+// ── World 登录：先拿 token，再连 agent ──
+function decodeTokenPayload(token) {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const pad = (4 - (b64.length % 4)) % 4;
+    const raw = atob(b64 + '='.repeat(pad));
+    const bytes = Uint8Array.from(raw, c => c.charCodeAt(0));
+    return JSON.parse(td.decode(bytes));
+  } catch (_) { return null; }
 }
 
-async function generateJWT() {
-  const sub = playerName.value.trim();
-  const secret = tokenSecret.value.trim();
-  if (!sub) { addLog('error', '请先填写玩家名（JWT 的 sub）'); return; }
-  if (!secret) { addLog('error', '请填写签名密钥（与 game TokenSecret 一致）'); return; }
-  if (!window.crypto || !crypto.subtle) {
-    addLog('error', '当前环境不支持 Web Crypto：请用 https / localhost / file:// 打开本页');
-    return;
-  }
+async function worldLogin() {
+  const host = worldHost.value.trim() || '127.0.0.1';
+  const port = worldPort.value.trim() || '9902';
+  const name = playerName.value.trim() || 'test_player';
+  const pwd = passEl.value.trim() || '123';
+  const url = 'http://' + host + ':' + port + '/login';
+  addLog('info', 'World 登录: ' + esc(url) + ' name=' + esc(name));
   try {
-    const header = b64url(te.encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' })));
-    const payload = b64url(te.encode(JSON.stringify({ sub: sub })));
-    const data = header + '.' + payload;
-    const key = await crypto.subtle.importKey('raw', te.encode(secret),
-      { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-    const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, te.encode(data)));
-    tokenEl.value = data + '.' + b64url(sig);
-    addLog('info', '已生成 HS256 JWT（sub=' + esc(sub) + '），可用作握手 token');
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name, password: pwd }),
+    });
+    const text = await resp.text();
+    if (!resp.ok) {
+      addLog('error', 'World 登录失败 (' + resp.status + '): ' + esc(text));
+      return;
+    }
+    const obj = JSON.parse(text);
+    const token = obj.token, agentAddr = obj.agent_addr;
+    if (!token || !agentAddr) {
+      addLog('error', 'World 响应缺少 token / agent_addr');
+      return;
+    }
+    tokenEl.value = token;
+    const payload = decodeTokenPayload(token);
+    if (payload) {
+      if (payload.uid) uidEl.value = String(payload.uid);
+      if (payload.sub) {
+        playerName.value = payload.sub;
+        nameEl.value = payload.sub;
+      }
+      addLog('info', 'token 信息: sub=' + esc(payload.sub) + ' uid=' + payload.uid);
+    }
+    const parts = agentAddr.split(':');
+    if (parts.length === 2) {
+      hostEl.value = parts[0];
+      portEl.value = parts[1];
+    }
+    addLog('info', '已获取 token，agent 地址: ' + esc(agentAddr));
+    if (!connected) connect();
   } catch (e) {
-    addLog('error', '生成 token 失败: ' + esc(e.message));
+    addLog('error', 'World 登录异常: ' + esc(e.message));
   }
 }
 
@@ -817,6 +847,11 @@ function init() {
 }
 
 init();
+// 自动心跳默认开启（连接后每 3s 发一次 CmdHeart）
+autoHbTimer = setInterval(sendHeartbeat, 3000);
+btnAutoHb.textContent = '自动心跳: 开';
+btnAutoHb.style.background = 'var(--green)';
+btnAutoHb.style.color = '#06240f';
 </script>
 </body>
 </html>

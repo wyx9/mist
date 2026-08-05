@@ -10,8 +10,9 @@ import (
 // Session 客户端连接 ↔ Game 连接的映射。
 type Session struct {
 	TunnelID   string
+	UID        int64
 	ClientConn network.NetConn
-	GameConn   network.NetConn
+	GameAddr   string
 }
 
 // sessionMap 全局会话表。

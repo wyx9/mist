@@ -1,21 +1,17 @@
 // internal/gameserver/network.go
-// 网络接入与会话隧道：监听 accept、Agent 连接握手与消息读循环、隧道回包。
+// 网络接入：监听 Agent 长连接，隧道帧分发见 tunnel.go。
 package gameserver
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
-	"simple_game/game/internal/actor"
-	"simple_game/game/pkg/codec"
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/network"
 )
 
-// serve 监听 Agent 连接并分发给 handler。
-func (s *Server) serve(addr string, tokenSecret string) {
+// serve 监听 Agent 长连接并分发给 handler。
+func (s *Server) serve(addr string) {
 	parts := strings.Split(addr, ":")
 	if len(parts) != 2 {
 		logger.ERROR("invalid game listen addr:", addr)
@@ -42,81 +38,18 @@ func (s *Server) serve(addr string, tokenSecret string) {
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
-			s.handleAgentConn(conn, []byte(tokenSecret))
+			link := &gatewayLink{conn: conn}
+			s.links.Store(link, link)
+			s.handleGatewayLink(link)
 		}()
 	}
 }
 
-// handshakeMsg 客户端握手消息。
-type handshakeMsg struct {
-	Token   string `json:"token"`
-	Version int    `json:"version"`
-}
-
-// handleAgentConn 处理单条 Agent 隧道连接。
-func (s *Server) handleAgentConn(conn network.NetConn, secret []byte) {
-	defer conn.Close()
-
-	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	data, err := conn.ReadMessage()
-	if err != nil {
-		logger.ERROR("read handshake from agent failed:", err)
-		return
-	}
-
-	hs := &handshakeMsg{}
-	if err := json.Unmarshal(data, hs); err != nil {
-		logger.ERROR("parse handshake failed:", err)
-		return
-	}
-
-	playerName, uid, err := s.verifyToken(hs.Token, secret)
-	if err != nil {
-		logger.ERROR("token verify failed:", err)
-		_ = conn.WriteMessage([]byte(`{"error":"invalid token"}`))
-		return
-	}
-	if uid == 0 {
-		logger.WARNING("token without uid, player:", playerName)
-	}
-
-	tunnelID := playerName
-	s.agentConns.Store(tunnelID, conn)
-	defer func() {
-		_ = s.ActorManner.CloseActor(tunnelID, 5*time.Second)
-		s.agentConns.Delete(tunnelID)
-		s.uidByTunnel.Delete(tunnelID)
-	}()
-
-	var handle actor.PersistHandle
-	if s.persist != nil {
-		handle = s.persist.HandleFor("player")
-	}
-	_, err = s.ActorManner.StartPlayer(tunnelID, uid, conn, handle)
-	if err != nil {
-		logger.ERROR("start player actor failed:", err)
-		return
-	}
-
-	_ = conn.WriteMessage(codec.PackTunnelRaw("HandshakeOk", nil, tunnelID))
-
-	for {
-		_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
-		data, err := conn.ReadMessage()
-		if err != nil {
-			return
-		}
-		if err := s.handleMsg(data, tunnelID); err != nil {
-			logger.ERROR("handleMsg error:", err)
-		}
-	}
-}
-
-// ReplyToAgent 通过隧道回复 Agent。
+// ReplyToAgent 通过隧道帧回包给 Agent。
 func (s *Server) ReplyToAgent(tunnelID string, data []byte) error {
-	val, ok := s.agentConns.Load(tunnelID)
+	val, ok := s.tunnels.Load(tunnelID)
 	if !ok {
-		return fmt.Errorf("agent conn not found: %s", tunnelID)
+		return fmt.Errorf("tunnel not found: %s", tunnelID)
 	}
-	return val.(network.NetConn).WriteMessage(data)
+	return val.(*TunnelConn).WriteMessage(data)
 }

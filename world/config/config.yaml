@@ -3,7 +3,7 @@ Http:
   Addr: "127.0.0.1"
   Port: "9902"
 
-AgentAddr: "127.0.0.1:8888"
+AgentAddr: "127.0.0.1:8889"
 TokenSecret: "shared-secret-key"
 TokenExpire: 24h
 
@@ -14,7 +14,7 @@ MySql:
   Port: 3306
   User: "root"
   PassWord: "123456"
-  DBName: "simple_game"
+  DBName: "mist_game"
 
 Redis:
   Addr: "127.0.0.1:6379"

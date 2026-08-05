@@ -7,7 +7,7 @@ Listeners:
     Addr: "0.0.0.0"
     Port: "8889"
 
-GameAddr: "127.0.0.1:9900"
+TokenSecret: "shared-secret-key"
 
 Redis:
   Addr: "127.0.0.1:6379"

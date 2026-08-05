@@ -8,11 +8,14 @@ import (
 	"syscall"
 
 	"gopkg.in/yaml.v3"
+
+	"simple_game/game/pkg/logger"
 )
 
 type agentConfig struct {
-	Listeners []listenerCfg `yaml:"Listeners"`
-	Redis     redisCfg      `yaml:"Redis"`
+	Listeners   []listenerCfg `yaml:"Listeners"`
+	TokenSecret string        `yaml:"TokenSecret"`
+	Redis       redisCfg      `yaml:"Redis"`
 }
 
 type listenerCfg struct {
@@ -39,7 +42,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	startAgent(cfg.Listeners, cfg.Redis)
+	// 启动日志消费，否则 agent 的日志不会输出到控制台
+	logger.StartLog()
+
+	startAgent(cfg.Listeners, cfg.Redis, cfg.TokenSecret)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)

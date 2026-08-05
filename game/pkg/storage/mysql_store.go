@@ -30,7 +30,8 @@ func quoteIdent(name string) (string, error) {
 }
 
 type sqlStore struct {
-	db *sqlx.DB
+	db     *sqlx.DB
+	shared bool // true 表示复用外部连接，Close 为空操作
 }
 
 // OpenMysqlStore 打开独立的 MySQL 连接（由 MysqlSync 负责关闭）。
@@ -40,6 +41,11 @@ func OpenMysqlStore(dsn string) (MysqlStore, error) {
 		return nil, err
 	}
 	return &sqlStore{db: db}, nil
+}
+
+// WrapMysqlStore 包装已存在的连接，不负责关闭；用于复用全局 mysql.DB。
+func WrapMysqlStore(db *sqlx.DB) MysqlStore {
+	return &sqlStore{db: db, shared: true}
 }
 
 func (s *sqlStore) EnsureTable(ctx context.Context, table string) error {
@@ -97,5 +103,8 @@ func (s *sqlStore) Delete(ctx context.Context, table string, actorID int64) erro
 }
 
 func (s *sqlStore) Close() error {
+	if s.shared {
+		return nil
+	}
 	return s.db.Close()
 }

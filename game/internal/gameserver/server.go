@@ -23,6 +23,7 @@ import (
 	"simple_game/game/internal/dispatch"
 	"simple_game/game/internal/persist"
 	"simple_game/game/pkg/network"
+	"simple_game/game/pkg/registry"
 )
 
 // Server Game 逻辑服单例。聚合所有组件，统一生命周期。
@@ -39,7 +40,14 @@ type Server struct {
 	persist *persist.Manager
 
 	// Agent 连接表 — tunnelID → network.NetConn
-	agentConns sync.Map
+	// 玩家隧道表 —— tunnelID → *TunnelConn
+	tunnels sync.Map
+
+	// Agent 长连接表 —— *gatewayLink → *gatewayLink
+	links sync.Map
+
+	// 注册到 Redis 的 game 地址
+	regAddr string
 
 	// 登录后绑定的玩家 uid 表 — tunnelID → int64(uid)
 	uidByTunnel sync.Map
@@ -100,6 +108,10 @@ func (s *Server) Start() error {
 	// Phase 3: 业务初始化
 	controller.RegisterAll()
 	s.ActorManner.RegisterAll()
+	// actor 故障（handler 超时）→ 异步踢掉该玩家连接
+	s.ActorManner.SetFaultHandler(func(name string) {
+		go s.kickFaultedTunnel(name)
+	})
 	persistMgr, err := newPersistManager(cfg, s.ActorManner)
 	if err != nil {
 		return fmt.Errorf("init persistence: %w", err)
@@ -116,7 +128,18 @@ func (s *Server) Start() error {
 	go rpc.StartGRPC()
 
 	addr := fmt.Sprintf("%s:%s", cfg.Listen.Addr, cfg.Listen.Port)
-	go s.serve(addr, cfg.TokenSecret)
+	go s.serve(addr)
+
+	// 注册 game 地址到 Redis 并启动心跳
+	s.regAddr = cfg.RegisterAddr
+	if s.regAddr == "" {
+		s.regAddr = addr
+	}
+	if err := registry.Register(context.Background(), redis.RedisClient, s.regAddr); err != nil {
+		logger.ERROR("game registry register failed:", err)
+	}
+	s.wg.Add(1)
+	go s.gameHeartbeat()
 
 	// Phase 5: 等待信号
 	s.started.Store(true)
@@ -140,9 +163,9 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 		_ = s.listener.Close()
 	}
 
-	// 2. 关闭所有 Agent 隧道
-	s.agentConns.Range(func(key, val interface{}) bool {
-		_ = val.(network.NetConn).Close()
+	// 2. 关闭所有 Agent 长连接（触发其上隧道清理）
+	s.links.Range(func(key, val interface{}) bool {
+		_ = val.(*gatewayLink).conn.Close()
 		return true
 	})
 
@@ -162,6 +185,13 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 	// 6. 取消 context
 	if s.cancel != nil {
 		s.cancel()
+	}
+
+	// 6.5 注销 game 注册（心跳协程已随 cancel 退出）
+	if s.regAddr != "" {
+		if err := registry.Unregister(context.Background(), redis.RedisClient, s.regAddr); err != nil {
+			logger.ERROR("game registry unregister failed:", err)
+		}
 	}
 
 	// 7. 等待所有连接处理完成
@@ -186,4 +216,21 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 
 	logger.INFO("Game server stopped")
 	return nil
+}
+
+// gameHeartbeat 周期向 Redis 续期 game 地址。
+func (s *Server) gameHeartbeat() {
+	defer s.wg.Done()
+	ticker := time.NewTicker(registry.HeartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			if err := registry.Register(context.Background(), redis.RedisClient, s.regAddr); err != nil {
+				logger.ERROR("game registry heartbeat failed:", err)
+			}
+		}
+	}
 }

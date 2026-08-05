@@ -14,44 +14,46 @@ import (
 	"simple_game/game/pkg/storage"
 )
 
-// CategorySpec 某类 actor 的持久化配置。
+const (
+	actorFlushInterval = 2 * time.Second // actor -> Redis 落盘周期
+	mysqlFlushInterval = 5 * time.Second // Redis -> MySQL 增量同步周期
+	mysqlBatchSize     = 100             // 每次同步的批大小
+)
+
+// CategorySpec 由 Register 从 actor 原型登记的类别落地配置。
 type CategorySpec struct {
 	Category       string
 	RedisKeyPrefix string
 	Table          string
-	DBName         string // 空则使用默认库
-	Codec          string // "json"（后续支持 "proto"）
-	FlushInterval  time.Duration
+	DBName         string // 空串 = 使用配置默认库
 }
 
-// Options PersistManager 构造参数。
+// Options Manager 构造参数。
 type Options struct {
-	AM             *actor.AManager
-	RDB            *redis.Client
-	Specs          map[string]CategorySpec
-	DefaultDBName  string
-	RedisQueueSize int                      // 异步写队列容量，<=0 使用默认 4096
-	MySQLCfg       *storage.MysqlSyncConfig // nil 则跳过 DB 同步（测试或纯 Redis 模式）
+	AM        *actor.AManager
+	RDB       *redis.Client
+	OpenStore func(dbName string) (storage.MysqlStore, error) // nil 则跳过 MySQL 同步
 }
 
-// Manager 持久化管理器：按类别定时向可持久化 actor 投递 PersistTick，
+// Manager 持久化管理器：按注册类别定时向可持久化 actor 投递 PersistTick，
 // 并驱动 Redis -> MySQL 的 DB 写线程。
 type Manager struct {
-	am      *actor.AManager
-	rdb     *redis.Client
-	specs   map[string]CategorySpec
-	codecs  map[string]storage.Codec
-	redis   *storage.RedisStore
-	writer  *storage.RedisWriter
-	mysql   *storage.MysqlSync
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	started bool
-	mu      sync.Mutex
+	am        *actor.AManager
+	rdb       *redis.Client
+	openStore func(dbName string) (storage.MysqlStore, error)
+	specs     map[string]CategorySpec
+	codec     storage.Codec
+	redis     *storage.RedisStore
+	writer    *storage.RedisWriter
+	mysql     *storage.MysqlSync
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	started   bool
+	mu        sync.Mutex
 }
 
-// NewManager 校验并规范化 spec，构造持久化管理器。
+// NewManager 构造持久化管理器；落地配置由后续 Register 提供。
 func NewManager(opts Options) (*Manager, error) {
 	if opts.AM == nil {
 		return nil, errors.New("persist: nil AManager")
@@ -59,62 +61,47 @@ func NewManager(opts Options) (*Manager, error) {
 	if opts.RDB == nil {
 		return nil, errors.New("persist: nil redis client")
 	}
-
-	specs := make(map[string]CategorySpec, len(opts.Specs))
-	for category, spec := range opts.Specs {
-		spec.Category = category
-		if spec.DBName == "" {
-			spec.DBName = opts.DefaultDBName
-		}
-		if spec.Category == "" || spec.RedisKeyPrefix == "" || spec.Table == "" || spec.FlushInterval <= 0 {
-			return nil, fmt.Errorf("persist: invalid spec for category %q", category)
-		}
-		if spec.Codec == "" {
-			spec.Codec = "json"
-		}
-		specs[category] = spec
-	}
-
-	codecs := map[string]storage.Codec{
-		"json": storage.JSONCodec{},
-	}
-	for category, spec := range specs {
-		if _, ok := codecs[spec.Codec]; !ok {
-			return nil, fmt.Errorf("persist: unknown codec %q for category %q", spec.Codec, category)
-		}
-	}
-
-	var mysql *storage.MysqlSync
-	if opts.MySQLCfg != nil {
-		if opts.MySQLCfg.OpenStore == nil {
-			return nil, errors.New("persist: nil OpenStore in MySQLCfg")
-		}
-		cfg := *opts.MySQLCfg
-		cfg.Categories = make(map[string]storage.CategoryTable, len(specs))
-		for category, spec := range specs {
-			cfg.Categories[category] = storage.CategoryTable{
-				Category:       category,
-				Table:          spec.Table,
-				DBName:         spec.DBName,
-				RedisKeyPrefix: spec.RedisKeyPrefix,
-			}
-		}
-		mysql = storage.NewMysqlSync(cfg)
-	}
-
 	redisStore := storage.NewRedisStore(opts.RDB)
 	return &Manager{
-		am:     opts.AM,
-		rdb:    opts.RDB,
-		specs:  specs,
-		codecs: codecs,
-		redis:  redisStore,
-		writer: storage.NewRedisWriter(redisStore, opts.RedisQueueSize),
-		mysql:  mysql,
+		am:        opts.AM,
+		rdb:       opts.RDB,
+		openStore: opts.OpenStore,
+		specs:     make(map[string]CategorySpec),
+		codec:     storage.JSONCodec{},
+		redis:     redisStore,
+		writer:    storage.NewRedisWriter(redisStore, 0),
 	}, nil
 }
 
-// Start 启动各类别 ticker 与 DB 写线程。
+// Register 登记某类别 actor 的落地配置（表名/前缀/库名来自原型实现），须在 Start 之前调用。
+func (m *Manager) Register(prototype actor.IActor) error {
+	p, ok := prototype.(actor.Persistable)
+	if !ok {
+		return fmt.Errorf("persist: %T does not implement Persistable", prototype)
+	}
+	category := prototype.Category()
+	if category == "" {
+		return fmt.Errorf("persist: empty category for %T", prototype)
+	}
+	spec := CategorySpec{
+		Category:       category,
+		RedisKeyPrefix: p.PersistKeyPrefix(),
+		Table:          p.PersistTable(),
+		DBName:         p.PersistDBName(),
+	}
+	if spec.RedisKeyPrefix == "" || spec.Table == "" {
+		return fmt.Errorf("persist: invalid spec for category %q (empty key prefix or table)", category)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.specs[category]; ok {
+		return fmt.Errorf("persist: category %q already registered", category)
+	}
+	m.specs[category] = spec
+	return nil
+}
+
+// Start 启动写协程、DB 写线程与全局落盘 ticker。
 func (m *Manager) Start() error {
 	m.mu.Lock()
 	if m.started {
@@ -126,20 +113,19 @@ func (m *Manager) Start() error {
 	m.mu.Unlock()
 
 	m.writer.Start()
-	if m.mysql != nil {
+	if m.openStore != nil {
+		m.mysql = newMysqlSync(m.rdb, m.openStore, m.specs)
 		if err := m.mysql.Start(); err != nil {
 			m.Stop(2 * time.Second)
 			return err
 		}
 	}
-	for _, spec := range m.specs {
-		m.wg.Add(1)
-		go m.tickLoop(spec)
-	}
+	m.wg.Add(1)
+	go m.tickLoop()
 	return nil
 }
 
-// Stop 停止 ticker，等待 DB 写线程做最终同步后关闭连接。
+// Stop 停止 ticker，先 drain Redis 写队列，再做 MySQL 最终同步后关闭连接。
 func (m *Manager) Stop(timeout time.Duration) {
 	m.mu.Lock()
 	if !m.started {
@@ -166,14 +152,17 @@ func (m *Manager) Stop(timeout time.Duration) {
 	}
 	if m.mysql != nil {
 		m.mysql.Stop(timeout)
+		m.mysql = nil
 	}
 }
 
 // HandleFor 返回某类别 actor 的落地句柄（用于创建 actor 时注入）。
-func (m *Manager) HandleFor(category string) actor.PersistHandle {
+func (m *Manager) HandleFor(category string) actor.PersistStore {
+	m.mu.Lock()
 	spec, ok := m.specs[category]
+	m.mu.Unlock()
 	if !ok {
-		logger.ERROR("persist: handle for unknown category:", category)
+		logger.ERROR("persist: store for unknown category:", category)
 		return nil
 	}
 	var mysql storage.MysqlStore
@@ -185,37 +174,64 @@ func (m *Manager) HandleFor(category string) actor.PersistHandle {
 			return nil
 		}
 	}
-	return &handle{
+	return &store{
 		spec:   spec,
-		codec:  m.codecs[spec.Codec],
+		codec:  m.codec,
 		redis:  m.redis,
 		mysql:  mysql,
 		writer: m.writer,
 	}
 }
 
-func (m *Manager) tickLoop(spec CategorySpec) {
+func (m *Manager) tickLoop() {
 	defer m.wg.Done()
-	ticker := time.NewTicker(spec.FlushInterval)
+	ticker := time.NewTicker(actorFlushInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-m.ctx.Done():
 			return
 		case <-ticker.C:
-			m.tickCategory(spec.Category)
+			m.tickAll()
 		}
 	}
 }
 
-func (m *Manager) tickCategory(category string) {
-	m.am.RangeByCategory(category, func(name string, ab *actor.ActorBase) bool {
-		if _, ok := ab.Actor().(actor.Persistable); !ok {
+func (m *Manager) tickAll() {
+	m.mu.Lock()
+	categories := make([]string, 0, len(m.specs))
+	for category := range m.specs {
+		categories = append(categories, category)
+	}
+	m.mu.Unlock()
+	for _, category := range categories {
+		m.am.RangeByCategory(category, func(name string, ab *actor.ActorBase) bool {
+			if _, ok := ab.Actor().(actor.Persistable); !ok {
+				return true
+			}
+			if err := m.am.Send(name, "persist", actor.PersistTick{}); err != nil {
+				logger.ERROR("persist tick send failed:", err, "actor:", name)
+			}
 			return true
+		})
+	}
+}
+
+func newMysqlSync(rdb *redis.Client, openStore func(dbName string) (storage.MysqlStore, error), specs map[string]CategorySpec) *storage.MysqlSync {
+	tables := make(map[string]storage.CategoryTable, len(specs))
+	for category, spec := range specs {
+		tables[category] = storage.CategoryTable{
+			Category:       category,
+			Table:          spec.Table,
+			DBName:         spec.DBName,
+			RedisKeyPrefix: spec.RedisKeyPrefix,
 		}
-		if err := m.am.Send(name, "persist", actor.PersistTick{}); err != nil {
-			logger.ERROR("persist tick send failed:", err, "actor:", name)
-		}
-		return true
+	}
+	return storage.NewMysqlSync(storage.MysqlSyncConfig{
+		Redis:      rdb,
+		Interval:   mysqlFlushInterval,
+		BatchSize:  mysqlBatchSize,
+		Categories: tables,
+		OpenStore:  openStore,
 	})
 }

@@ -11,7 +11,7 @@ type Player struct {
 	uid        int64           // 玩家全局唯一 id（持久化主键，来自账号体系）
 	ip         string          // 玩家 IP 地址
 	conn       network.NetConn // 网络连接（协议无关）
-	handle     PersistHandle   // 持久化句柄（由 gameserver 创建时注入）
+	store      PersistStore    // 持久化落地句柄（由 gameserver 创建时注入）
 	dirty      bool            // 脏标记：数据变更后置位，持久化 tick 落地
 	PlayerData *PlayerData     // 玩家数据
 }
@@ -42,8 +42,17 @@ func (p *Player) ActorID() int64 { return p.uid }
 // PersistData 实现 Persistable：返回待序列化的玩家数据。
 func (p *Player) PersistData() any { return p.PlayerData }
 
-// SetPersistHandle 实现 SetPersistHandle：创建阶段注入，须在 Start 之前完成。
-func (p *Player) SetPersistHandle(h PersistHandle) { p.handle = h }
+// PersistKeyPrefix 实现 Persistable：玩家数据 Redis key 前缀。
+func (p *Player) PersistKeyPrefix() string { return "actor_data:player:" }
+
+// PersistTable 实现 Persistable：玩家数据 MySQL 表名。
+func (p *Player) PersistTable() string { return "player_data" }
+
+// PersistDBName 实现 Persistable：玩家数据 MySQL 库名，空串表示使用配置默认库。
+func (p *Player) PersistDBName() string { return "" }
+
+// SetPersistStore 实现 SetPersistStore：创建阶段注入，须在 Start 之前完成。
+func (p *Player) SetPersistStore(s PersistStore) { p.store = s }
 
 // MarkDirty 标记玩家数据已变更，等待下一个持久化 tick 落地。
 func (p *Player) MarkDirty() { p.dirty = true }
@@ -57,11 +66,11 @@ func (p *Player) HandleMessage(ctx *ActorContext, msg interface{}) {
 
 // loadPlayer 通过持久化句柄加载玩家数据；双 miss 时使用默认结构并标记脏以便首次落地。
 func (p *Player) loadPlayer() {
-	if p.handle == nil {
+	if p.store == nil {
 		logger.WARNING("player persist handle not set, skip load:", p.name)
 		return
 	}
-	found, err := p.handle.Load(p.uid, p.PlayerData)
+	found, err := p.store.Load(p.uid, p.PlayerData)
 	if err != nil {
 		logger.ERROR("player load failed:", err, "name:", p.name)
 		return
@@ -76,11 +85,11 @@ func (p *Player) loadPlayer() {
 
 // flushNow 无条件落地玩家数据（actor 退出/停机兜底）。
 func (p *Player) flushNow() {
-	if p.handle == nil {
+	if p.store == nil {
 		logger.WARNING("player persist handle not set, skip flush:", p.name)
 		return
 	}
-	if err := p.handle.Save(p.uid, p.PlayerData); err != nil {
+	if err := p.store.Save(p.uid, p.PlayerData); err != nil {
 		logger.ERROR("player persist failed:", err, "name:", p.name)
 		return
 	}

@@ -1,6 +1,7 @@
 package actor
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -18,9 +19,27 @@ type categoryIndex struct {
 
 // AManager Actor管理器 — 全局单例，负责所有 Actor 的存储、查找、消息投递。
 type AManager struct {
-	actorMap   sync.Map // name → *ActorBase  主存储
-	categories sync.Map // categoryName(string) → *categoryIndex
-	mu         sync.RWMutex
+	actorMap     sync.Map // name → *ActorBase  主存储
+	categories   sync.Map // categoryName(string) → *categoryIndex
+	mu           sync.RWMutex
+	faultHandler func(name string) // actor 故障回调（handler 超时等），由 gameserver 设置
+}
+
+// SetFaultHandler 注册 actor 故障回调（如 handler 超时），用于踢掉故障玩家的连接。
+func (am *AManager) SetFaultHandler(fn func(name string)) {
+	am.mu.Lock()
+	defer am.mu.Unlock()
+	am.faultHandler = fn
+}
+
+// notifyFault 通知故障回调（不阻塞，读取回调快照后调用）。
+func (am *AManager) notifyFault(name string) {
+	am.mu.RLock()
+	fn := am.faultHandler
+	am.mu.RUnlock()
+	if fn != nil {
+		fn(name)
+	}
 }
 
 // RegisterCategory 注册 Actor 类别。传入原型实例，通过 Category() 获取类别名。
@@ -105,7 +124,7 @@ func (am *AManager) CloseActor(name string, timeout time.Duration) error {
 	err := ab.Shutdown(timeout)
 	// 无论关闭结果如何都从注册表移除，避免残留已关闭的 Actor。
 	am.Remove(name)
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrActorClose) {
 		logger.ERROR("close actor error:", err, "name:", name)
 	}
 	return err
@@ -138,13 +157,13 @@ func StartActor[A IActor](am *AManager, name string, actor A, config *ActorConfi
 }
 
 // StartPlayer 创建并启动玩家 Actor，注册到管理器。
-func (am *AManager) StartPlayer(name string, uid int64, conn network.NetConn, handle PersistHandle) (*Player, error) {
+func (am *AManager) StartPlayer(name string, uid int64, conn network.NetConn, store PersistStore) (*Player, error) {
 	playerActor := &Player{
-		name: name,
-		uid:  uid,
-		ip:   conn.RemoteAddr(),
-		conn: conn,
-		handle: handle,
+		name:  name,
+		uid:   uid,
+		ip:    conn.RemoteAddr(),
+		conn:  conn,
+		store: store,
 		PlayerData: &PlayerData{
 			UID:         uid,
 			Name:        name,
