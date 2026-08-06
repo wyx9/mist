@@ -1,0 +1,54 @@
+package actor
+
+import (
+	"sync/atomic"
+	"time"
+
+	"simple_game/game/pkg/logger"
+)
+
+// ActorContext 提供给 handler 的执行上下文，支持向其他 actor 发送消息与发起 RPC。
+type ActorContext struct {
+	manager *AManager
+	self    string
+	env     *Envelope
+	replied atomic.Bool
+}
+
+// Name 返回当前 actor 名称。
+func (c *ActorContext) Name() string { return c.self }
+
+// From 返回当前消息来源。
+func (c *ActorContext) From() string {
+	if c.env == nil {
+		return ""
+	}
+	return c.env.From
+}
+
+// Kind 返回当前消息类型。
+func (c *ActorContext) Kind() MsgKind {
+	if c.env == nil {
+		return MsgClient
+	}
+	return c.env.Kind
+}
+
+// Send 向其他 actor 异步投递消息。
+func (c *ActorContext) Send(to string, msg interface{}) error {
+	return c.manager.Send(to, c.self, msg)
+}
+
+// Call 向其他 actor 发起 RPC 并等待回复。
+func (c *ActorContext) Call(to string, msg interface{}, timeout time.Duration) (interface{}, error) {
+	return c.manager.Call(to, c.self, msg, timeout)
+}
+
+// Reply 显式回复当前消息；仅对 RPC（MsgCall）有效，且只允许回复一次。
+func (c *ActorContext) Reply(result interface{}) {
+	if c.env == nil || c.env.Kind != MsgCall || !c.replied.CompareAndSwap(false, true) {
+		logger.WARNING("ActorContext.Reply ignored, actor:", c.self)
+		return
+	}
+	c.env.Reply <- result
+}
