@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-redis/redis/v8"
 
-	"simple_game/game/internal/actor"
+	core "simple_game/game/internal/actor/core"
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/storage"
 )
@@ -30,7 +30,7 @@ type CategorySpec struct {
 
 // Options Manager 构造参数。
 type Options struct {
-	AM        *actor.AManager
+	AM        *core.AManager
 	RDB       *redis.Client
 	OpenStore func(dbName string) (storage.MysqlStore, error) // nil 则跳过 MySQL 同步
 }
@@ -38,7 +38,7 @@ type Options struct {
 // Manager 持久化管理器：按注册类别定时向可持久化 actor 投递 PersistTick，
 // 并驱动 Redis -> MySQL 的 DB 写线程。
 type Manager struct {
-	am        *actor.AManager
+	am        *core.AManager
 	rdb       *redis.Client
 	openStore func(dbName string) (storage.MysqlStore, error)
 	specs     map[string]CategorySpec
@@ -74,8 +74,8 @@ func NewManager(opts Options) (*Manager, error) {
 }
 
 // Register 登记某类别 actor 的落地配置（表名/前缀/库名来自原型实现），须在 Start 之前调用。
-func (m *Manager) Register(prototype actor.IActor) error {
-	p, ok := prototype.(actor.Persistable)
+func (m *Manager) Register(prototype core.IActor) error {
+	p, ok := prototype.(core.Persistable)
 	if !ok {
 		return fmt.Errorf("persist: %T does not implement Persistable", prototype)
 	}
@@ -157,7 +157,7 @@ func (m *Manager) Stop(timeout time.Duration) {
 }
 
 // HandleFor 返回某类别 actor 的落地句柄（用于创建 actor 时注入）。
-func (m *Manager) HandleFor(category string) actor.PersistStore {
+func (m *Manager) HandleFor(category string) core.PersistStore {
 	m.mu.Lock()
 	spec, ok := m.specs[category]
 	m.mu.Unlock()
@@ -205,11 +205,11 @@ func (m *Manager) tickAll() {
 	}
 	m.mu.Unlock()
 	for _, category := range categories {
-		m.am.RangeByCategory(category, func(name string, ab *actor.ActorBase) bool {
-			if _, ok := ab.Actor().(actor.Persistable); !ok {
+		m.am.RangeByCategory(category, func(name string, ab *core.ActorBase) bool {
+			if _, ok := ab.Actor().(core.Persistable); !ok {
 				return true
 			}
-			if err := m.am.Send(name, "persist", actor.PersistTick{}); err != nil {
+			if err := m.am.Send(name, "persist", core.PersistTick{}); err != nil {
 				logger.ERROR("persist tick send failed:", err, "actor:", name)
 			}
 			return true

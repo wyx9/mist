@@ -8,7 +8,7 @@ import (
 	"simple_game/game/pkg/storage"
 )
 
-// store 实现 actor.PersistStore：Redis 热源 + MySQL 回源，写路径异步入队。
+// store 实现 core.PersistStore：Redis 热源 + MySQL 回源，写路径异步入队。
 type store struct {
 	spec   CategorySpec
 	codec  storage.Codec

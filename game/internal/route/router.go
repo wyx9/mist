@@ -13,7 +13,7 @@ import (
 	"simple_game/game/pkg/protocol"
 )
 
-// ActorComm 跨 actor 通信能力，由 actor.ActorContext 实现。
+// ActorComm 跨 actor 通信能力，由 actor/core.ActorContext 实现。
 // handler 与其它 actor 通信只能走 Send/Call，禁止直接操作其内部状态。
 type ActorComm interface {
 	Send(to string, msg interface{}) error

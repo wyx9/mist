@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"simple_game/game/internal/actor"
+	core "simple_game/game/internal/actor/core"
 	"simple_game/game/pkg/codec"
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/network"
@@ -138,11 +139,11 @@ func (s *Server) handleTunnelHandshake(link *gatewayLink, tunnelID string, paylo
 
 	tc := &TunnelConn{link: link, tunnelID: tunnelID, remote: link.conn.RemoteAddr()}
 	s.uidByTunnel.Store(tunnelID, uid)
-	var store actor.PersistStore
+	var store core.PersistStore
 	if s.persist != nil {
 		store = s.persist.HandleFor("player")
 	}
-	if _, err := s.ActorManner.StartPlayer(tunnelID, uid, tc, store); err != nil {
+	if _, err := actor.StartPlayer(s.ActorManner, tunnelID, uid, tc, store); err != nil {
 		s.uidByTunnel.Delete(tunnelID)
 		return s.ackHandshake(link, tunnelID, false, err.Error())
 	}

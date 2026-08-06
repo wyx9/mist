@@ -1,4 +1,4 @@
-package actor
+package core
 
 // Persistable 可持久化 actor 接口：具体 actor 必须实现，由 PersistManager 定时驱动落地。
 // 表名 / Redis key 前缀 / MySQL 库名均由具体 actor 提供，框架不感知业务配置。

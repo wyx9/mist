@@ -1,4 +1,4 @@
-package actor
+package core
 
 import (
 	"errors"
@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"simple_game/game/pkg/logger"
-	"simple_game/game/pkg/network"
 	"simple_game/game/pkg/protocol"
 	"simple_game/game/pkg/uid"
 )
@@ -56,13 +55,6 @@ func (am *AManager) RegisterCategory(prototype IActor) {
 		return
 	}
 	am.categories.Store(category, &categoryIndex{})
-}
-
-// RegisterAll 统一注册入口 — Server Phase 3 调用。在此创建所有 Actor 类别原型并注册。
-func (am *AManager) RegisterAll() {
-	am.RegisterCategory(&Player{})
-
-	logger.INFO("AManager RegisterAll complete")
 }
 
 // addToCategories 将 actor 按 Category() 写入对应类别索引。
@@ -154,26 +146,6 @@ func StartActor[A IActor](am *AManager, name string, actor A, config *ActorConfi
 		return nil, err
 	}
 	return ab, nil
-}
-
-// StartPlayer 创建并启动玩家 Actor，注册到管理器。
-func (am *AManager) StartPlayer(name string, uid int64, conn network.NetConn, store PersistStore) (*Player, error) {
-	playerActor := &Player{
-		name:  name,
-		uid:   uid,
-		ip:    conn.RemoteAddr(),
-		conn:  conn,
-		store: store,
-		PlayerData: &PlayerData{
-			UID:         uid,
-			Name:        name,
-			LastLoginAt: time.Now().Unix(),
-		},
-	}
-	if _, err := StartActor(am, name, playerActor, nil); err != nil {
-		return nil, err
-	}
-	return playerActor, nil
 }
 
 // RangeByCategory 遍历指定类别的所有 Actor。回调返回 false 时停止遍历。

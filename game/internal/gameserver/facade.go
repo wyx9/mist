@@ -5,7 +5,7 @@ package gameserver
 import (
 	"time"
 
-	"simple_game/game/internal/actor"
+	core "simple_game/game/internal/actor/core"
 	"simple_game/game/pkg/protocol"
 )
 
@@ -34,6 +34,6 @@ func (s *Server) Dispatch(tunnelID string, task func()) {
 }
 
 // RegisterActor 注册 Actor 到管理器。
-func (s *Server) RegisterActor(a *actor.ActorBase) error {
+func (s *Server) RegisterActor(a *core.ActorBase) error {
 	return s.ActorManner.Add(a)
 }

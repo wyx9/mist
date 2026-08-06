@@ -1,19 +1,22 @@
 package actor
 
 import (
+	"time"
+
+	"simple_game/game/internal/actor/core"
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/network"
 )
 
-// Player 玩家 Actor，实现 IActor / Persistable / MessageHandler。
+// Player 玩家业务 Actor，实现 core.IActor / core.Persistable / core.MessageHandler。
 type Player struct {
-	name       string          // 玩家名（登录名/路由名）
-	uid        int64           // 玩家全局唯一 id（持久化主键，来自账号体系）
-	ip         string          // 玩家 IP 地址
-	conn       network.NetConn // 网络连接（协议无关）
-	store      PersistStore    // 持久化落地句柄（由 gameserver 创建时注入）
-	dirty      bool            // 脏标记：数据变更后置位，持久化 tick 落地
-	PlayerData *PlayerData     // 玩家数据
+	name       string            // 玩家名（登录名/路由名）
+	uid        int64             // 玩家全局唯一 id（持久化主键，来自账号体系）
+	ip         string            // 玩家 IP 地址
+	conn       network.NetConn   // 网络连接（协议无关）
+	store      core.PersistStore // 持久化落地句柄（由 gameserver 创建时注入）
+	dirty      bool              // 脏标记：数据变更后置位，持久化 tick 落地
+	PlayerData *PlayerData       // 玩家数据
 }
 
 // PlayerData 玩家数据，序列化后存储。
@@ -21,6 +24,32 @@ type PlayerData struct {
 	UID         int64  // 玩家唯一 id
 	Name        string // 玩家名
 	LastLoginAt int64  // 最后登录时间
+}
+
+// RegisterAll 统一注册业务 Actor 类别（Player），Server Phase 3 调用。
+func RegisterAll(am *core.AManager) {
+	am.RegisterCategory(&Player{})
+	logger.INFO("actor RegisterAll complete")
+}
+
+// StartPlayer 创建并启动玩家 Actor，注册到管理器。
+func StartPlayer(am *core.AManager, name string, uid int64, conn network.NetConn, store core.PersistStore) (*Player, error) {
+	playerActor := &Player{
+		name:  name,
+		uid:   uid,
+		ip:    conn.RemoteAddr(),
+		conn:  conn,
+		store: store,
+		PlayerData: &PlayerData{
+			UID:         uid,
+			Name:        name,
+			LastLoginAt: time.Now().Unix(),
+		},
+	}
+	if _, err := core.StartActor(am, name, playerActor, nil); err != nil {
+		return nil, err
+	}
+	return playerActor, nil
 }
 
 // Start 玩家 Actor 启动时加载数据（Redis -> MySQL -> 默认值）。
@@ -36,30 +65,30 @@ func (p *Player) Stop() {
 	p.flushNow()
 }
 
-// ActorID 实现 Persistable：返回玩家全局唯一 uid。
+// ActorID 实现 core.Persistable：返回玩家全局唯一 uid。
 func (p *Player) ActorID() int64 { return p.uid }
 
-// PersistData 实现 Persistable：返回待序列化的玩家数据。
+// PersistData 实现 core.Persistable：返回待序列化的玩家数据。
 func (p *Player) PersistData() any { return p.PlayerData }
 
-// PersistKeyPrefix 实现 Persistable：玩家数据 Redis key 前缀。
+// PersistKeyPrefix 实现 core.Persistable：玩家数据 Redis key 前缀。
 func (p *Player) PersistKeyPrefix() string { return "actor_data:player:" }
 
-// PersistTable 实现 Persistable：玩家数据 MySQL 表名。
+// PersistTable 实现 core.Persistable：玩家数据 MySQL 表名。
 func (p *Player) PersistTable() string { return "player_data" }
 
-// PersistDBName 实现 Persistable：玩家数据 MySQL 库名，空串表示使用配置默认库。
+// PersistDBName 实现 core.Persistable：玩家数据 MySQL 库名，空串表示使用配置默认库。
 func (p *Player) PersistDBName() string { return "" }
 
-// SetPersistStore 实现 SetPersistStore：创建阶段注入，须在 Start 之前完成。
-func (p *Player) SetPersistStore(s PersistStore) { p.store = s }
+// SetPersistStore 实现 core.SetPersistStore：创建阶段注入，须在 Start 之前完成。
+func (p *Player) SetPersistStore(s core.PersistStore) { p.store = s }
 
 // MarkDirty 标记玩家数据已变更，等待下一个持久化 tick 落地。
 func (p *Player) MarkDirty() { p.dirty = true }
 
 // HandleMessage 处理内部消息：PersistTick 时按脏标记落地。
-func (p *Player) HandleMessage(ctx *ActorContext, msg interface{}) {
-	if _, ok := msg.(PersistTick); ok {
+func (p *Player) HandleMessage(ctx *core.ActorContext, msg interface{}) {
+	if _, ok := msg.(core.PersistTick); ok {
 		p.flushIfDirty()
 	}
 }
@@ -104,7 +133,7 @@ func (p *Player) flushIfDirty() {
 	p.flushNow()
 }
 
-// WriteMessage 实现 clientMsgWriter：向该玩家的客户端连接回包。
+// WriteMessage 实现 core.clientMsgWriter：向该玩家的客户端连接回包。
 func (p *Player) WriteMessage(data []byte) error {
 	return p.conn.WriteMessage(data)
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"simple_game/game/internal/actor"
+	core "simple_game/game/internal/actor/core"
 	"simple_game/game/internal/persist"
 	"simple_game/game/pkg/mysql"
 	"simple_game/game/pkg/redis"
@@ -12,7 +13,7 @@ import (
 )
 
 // newPersistManager 构建持久化管理器：落地配置（表名/前缀/库名）由 actor 原型实现提供。
-func newPersistManager(cfg *GameConfig, am *actor.AManager) (*persist.Manager, error) {
+func newPersistManager(cfg *GameConfig, am *core.AManager) (*persist.Manager, error) {
 	m, err := persist.NewManager(persist.Options{
 		AM:  am,
 		RDB: redis.RedisClient,

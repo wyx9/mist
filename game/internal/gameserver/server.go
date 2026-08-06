@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"simple_game/game/internal/actor"
+	core "simple_game/game/internal/actor/core"
 	"simple_game/game/internal/controller"
 	"simple_game/game/internal/dispatch"
 	"simple_game/game/internal/persist"
@@ -34,7 +35,7 @@ type Server struct {
 	listener network.Listener
 
 	// Actor管理器（全局单例，跟随 Server 生命周期）
-	ActorManner *actor.AManager
+	ActorManner *core.AManager
 
 	// 持久化管理器（生命周期跟随 Server）
 	persist *persist.Manager
@@ -74,7 +75,7 @@ var (
 func NewServer() *Server {
 	once.Do(func() {
 		instance = &Server{
-			ActorManner: &actor.AManager{},
+			ActorManner: &core.AManager{},
 		}
 	})
 	return instance
@@ -107,7 +108,7 @@ func (s *Server) Start() error {
 
 	// Phase 3: 业务初始化
 	controller.RegisterAll()
-	s.ActorManner.RegisterAll()
+	actor.RegisterAll(s.ActorManner)
 	// actor 故障（handler 超时）→ 异步踢掉该玩家连接
 	s.ActorManner.SetFaultHandler(func(name string) {
 		go s.kickFaultedTunnel(name)

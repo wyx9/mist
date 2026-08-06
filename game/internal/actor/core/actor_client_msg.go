@@ -1,4 +1,4 @@
-package actor
+package core
 
 import (
 	"simple_game/game/internal/route"
