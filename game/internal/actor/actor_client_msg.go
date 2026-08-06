@@ -42,7 +42,9 @@ func HandleClientMsg[A any](actor A, actx *ActorContext, msg interface{}) {
 		return
 	}
 	if w, ok := any(actor).(clientMsgWriter); ok {
-		_ = w.WriteMessage(out)
+		if err := w.WriteMessage(out); err != nil {
+			logger.ERROR("write response error:", err, "cmd:", m.Cmd)
+		}
 		return
 	}
 	logger.WARNING("actor has no WriteMessage, response dropped, cmd:", m.Cmd)
