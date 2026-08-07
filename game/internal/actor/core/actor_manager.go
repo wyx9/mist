@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -16,12 +17,15 @@ type categoryIndex struct {
 	actors sync.Map // key(string) → *ActorBase
 }
 
-// AManager Actor管理器 — 全局单例，负责所有 Actor 的存储、查找、消息投递。
+// AManager Actor 管理器：全局单例，负责所有 Actor 的存储、查找、消息投递与生命周期状态机。
 type AManager struct {
-	actorMap     sync.Map // name → *ActorBase  主存储
+	actorMap     sync.Map // name → *ActorBase 主存储
 	categories   sync.Map // categoryName(string) → *categoryIndex
 	mu           sync.RWMutex
 	faultHandler func(name string) // actor 故障回调（handler 超时等），由 gameserver 设置
+	sweeperCtx   context.Context
+	sweeperStop  context.CancelFunc
+	sweeperRun   bool
 }
 
 // SetFaultHandler 注册 actor 故障回调（如 handler 超时），用于踢掉故障玩家的连接。
@@ -38,6 +42,83 @@ func (am *AManager) notifyFault(name string) {
 	am.mu.RUnlock()
 	if fn != nil {
 		fn(name)
+	}
+}
+
+// Start 启动状态机 sweeper：空闲休眠标记与超时关闭。幂等。
+func (am *AManager) Start() {
+	am.mu.Lock()
+	defer am.mu.Unlock()
+	if am.sweeperRun {
+		return
+	}
+	am.sweeperCtx, am.sweeperStop = context.WithCancel(context.Background())
+	am.sweeperRun = true
+	go am.sweepLoop()
+}
+
+// Stop 停止状态机 sweeper。幂等。
+func (am *AManager) Stop() {
+	am.mu.Lock()
+	defer am.mu.Unlock()
+	if !am.sweeperRun {
+		return
+	}
+	am.sweeperStop()
+	am.sweeperRun = false
+}
+
+func (am *AManager) sweepLoop() {
+	ticker := time.NewTicker(SweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-am.sweeperCtx.Done():
+			return
+		case <-ticker.C:
+			am.sweepOnce()
+		}
+	}
+}
+
+func (am *AManager) sweepOnce() {
+	am.actorMap.Range(func(key, value interface{}) bool {
+		if ab, ok := value.(*ActorBase); ok {
+			am.sweepActor(ab)
+		}
+		return true
+	})
+}
+
+//		sweepActor 单 actor 状态推进：
+//	  - Running 且空闲超时 → Sleeping（仅状态标签，在线永不因空闲关闭）；
+//	  - Sleeping 且未附加连接且休眠超时 → 真正关闭（落盘 + 移除）。
+func (am *AManager) sweepActor(ab *ActorBase) {
+	if ab.State() == StateClosed || ab.idleTimeout <= 0 {
+		return
+	}
+	now := time.Now()
+	switch ab.State() {
+	case StateRunning:
+		if now.Sub(time.Unix(0, ab.lastActiveAt.Load())) >= ab.idleTimeout {
+			ab.markSleeping()
+		}
+	case StateSleeping:
+		if ab.attached.Load() {
+			return // 在线永不因空闲关闭
+		}
+		if now.Sub(time.Unix(0, ab.sleepAt.Load())) < ab.idleTimeout {
+			return
+		}
+		// 关闭前再次确认仍是休眠且未附加，避免与唤醒竞态
+		if ab.State() != StateSleeping || ab.attached.Load() {
+			return
+		}
+		if err := am.CloseActor(ab.name, CloseTimeout); err != nil && !errors.Is(err, ErrActorClose) {
+			logger.ERROR("idle close actor error:", err, "name:", ab.name)
+			return
+		}
+		logger.INFO("actor closed by idle timeout, name:", ab.name)
 	}
 }
 
@@ -85,9 +166,18 @@ func (am *AManager) removeFromCategories(ab *ActorBase) {
 	ci.actors.Delete(ab.name)
 }
 
-// Add 添加 Actor 到管理器。自动按已注册类别建立索引。
+// Add 添加 Actor 到管理器：缓存空闲超时并刷新活动时间，自动按已注册类别建立索引。
 func (am *AManager) Add(ab *ActorBase) error {
 	ab.manager = am // 注入管理器引用，供 handler 内部 RPC 使用
+	ab.idleTimeout = DefaultIdleTimeout
+	if p, ok := ab.iActor.(IdleTimeoutProvider); ok {
+		if t := p.IdleTimeout(); t > 0 {
+			ab.idleTimeout = t
+		} else {
+			ab.idleTimeout = 0 // 显式禁用自动关闭
+		}
+	}
+	ab.touchActivity()
 	am.actorMap.Store(ab.name, ab)
 	am.addToCategories(ab)
 	return nil
@@ -122,18 +212,48 @@ func (am *AManager) CloseActor(name string, timeout time.Duration) error {
 	return err
 }
 
+// Detach 连接断开：actor 保留进入休眠（重连宽限开始计时），并向 actor 投递 ConnDetached 清理连接引用。
+func (am *AManager) Detach(name string) error {
+	ab := am.Find(name)
+	if ab == nil {
+		return ErrActorNotFound
+	}
+	if !ab.markDetached() {
+		return ErrActorClose
+	}
+	if err := am.SendSystem(name, "server", ConnDetached{}); err != nil {
+		logger.WARNING("detach send ConnDetached failed:", err, "actor:", name)
+	}
+	return nil
+}
+
+// Attach 重连唤醒休眠 actor：置运行并注入新连接；actor 已关闭时返回 ErrActorClose。
+func (am *AManager) Attach(name string, conn any) error {
+	ab := am.Find(name)
+	if ab == nil {
+		return ErrActorNotFound
+	}
+	if err := am.SendSystem(name, "server", ConnAttached{Conn: conn}); err != nil {
+		return err
+	}
+	if !ab.markAttached() {
+		return ErrActorClose
+	}
+	return nil
+}
+
 // StartActor 创建并启动一个 Actor，注册到管理器。
 // 客户端消息默认走 HandleClientMsg：按具体 actor 类型注入 clientHandler，
 // 响应通过 actor 的 WriteMessage 能力（clientMsgWriter）自动回包。
 // 注意：Go 方法不支持类型参数，因此这是包级泛型函数。
-func StartActor[A IActor](am *AManager, name string, actor A, config *ActorConfig) (*ActorBase, error) {
+func StartActor[A IActor](am *AManager, name string, actor A) (*ActorBase, error) {
 	// 框架级身份保证：每个 actor 都有全局唯一 uid。
 	// 具体 actor 若实现 ActorID() 且返回非零（如 Player 使用账号 uid），则沿用；否则自动分配雪花 ID。
 	id := uid.NewUid()
 	if p, ok := any(actor).(interface{ ActorID() int64 }); ok && p.ActorID() != 0 {
 		id = p.ActorID()
 	}
-	ab := NewActorBase(name, actor, config)
+	ab := NewActorBase(name, actor)
 	if ab == nil {
 		return nil, fmt.Errorf("create actor base failed: %s", name)
 	}
@@ -231,9 +351,14 @@ func (am *AManager) Deliver(name string, msg *protocol.Msg) error {
 	return am.deliver(name, &Envelope{From: "server", Kind: MsgClient, Payload: msg})
 }
 
-// Send 向其他 actor 异步投递消息。
+// Send 向其他 actor 异步投递消息（业务消息，计入活动时间）。
 func (am *AManager) Send(to, from string, msg interface{}) error {
 	return am.deliver(to, &Envelope{From: from, Kind: MsgSend, Payload: msg})
+}
+
+// SendSystem 投递系统消息（PersistTick/连接生命周期），不刷新业务活动时间。
+func (am *AManager) SendSystem(to, from string, msg interface{}) error {
+	return am.deliver(to, &Envelope{From: from, Kind: MsgSend, Payload: msg, System: true})
 }
 
 // Call 向其他 actor 发起 RPC 并等待回复。
@@ -273,6 +398,8 @@ func (am *AManager) Call(to, from string, msg interface{}, timeout time.Duration
 }
 
 // deliver 投递信封到目标 actor 队列。
+// 业务消息（非 System）先刷新活动时间（唤醒休眠 actor）再入队；
+// 入队时监听 stop 通道，避免与关闭竞态导致阻塞或 panic。
 func (am *AManager) deliver(name string, env *Envelope) error {
 	ab := am.Find(name)
 	if ab == nil {
@@ -281,11 +408,16 @@ func (am *AManager) deliver(name string, env *Envelope) error {
 	if ab.isClosed() {
 		return ErrActorClose
 	}
-	timer := time.NewTimer(ab.config.SendTimeout)
+	if !env.System {
+		ab.touchActivity()
+	}
+	timer := time.NewTimer(SendTimeout)
 	defer timer.Stop()
 	select {
 	case ab.request <- env:
 		return nil
+	case <-ab.stop:
+		return ErrActorClose
 	case <-timer.C:
 		return ErrSendTimeout
 	}

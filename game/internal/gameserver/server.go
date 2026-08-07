@@ -113,6 +113,7 @@ func (s *Server) Start() error {
 	s.ActorManner.SetFaultHandler(func(name string) {
 		go s.kickFaultedTunnel(name)
 	})
+	s.ActorManner.Start()
 	persistMgr, err := newPersistManager(cfg, s.ActorManner)
 	if err != nil {
 		return fmt.Errorf("init persistence: %w", err)
@@ -171,6 +172,7 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 	})
 
 	// 3. 关闭所有 Actor
+	s.ActorManner.Stop()
 	s.ActorManner.ShutdownActors(5 * time.Second)
 
 	// 4. 停持久化：先停 ticker，再做 Redis->MySQL 最终同步

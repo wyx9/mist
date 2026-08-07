@@ -7,29 +7,26 @@ import (
 	"simple_game/game/pkg/logger"
 )
 
-// loop Actor的主循环，处理消息
+// loop Actor 的主循环：处理消息，循环退出时执行 Stop 清理并通知关闭。
+// request 通道永不关闭：投递方通过监听 stop 通道避免与关闭竞态。
 func (ac *ActorBase) loop() {
-	// 调用Actor的启动函数
+	// 调用 Actor 的启动函数
 	ac.iActor.Start()
 
 	go func() {
 		defer func() {
-			ac.iActor.Stop()  // 停止Actor
-			ac.setClose()     // 设置关闭状态
-			close(ac.request) // 关闭请求通道
-			close(ac.stop)    // 关闭停止通道
+			ac.iActor.Stop() // 停止 Actor（落盘兜底）
+			ac.setState(StateClosed)
+			close(ac.stop) // 通知 Shutdown 等待方
 		}()
 
 		for {
 			select {
 			case <-ac.ctx.Done(): // 上下文取消时退出
-				logger.INFO("Actor context canceled , name:", ac.name)
+				logger.INFO("Actor context canceled, name:", ac.name)
 				return
 
-			case raw, ok := <-ac.request: // 处理消息信封
-				if !ok {
-					return
-				}
+			case raw := <-ac.request: // 处理消息信封
 				env, ok := raw.(*Envelope)
 				if !ok {
 					logger.ERROR("unexpected message type in actor queue:", raw)
@@ -49,7 +46,7 @@ func (ac *ActorBase) handleEnvelope(env *Envelope) {
 		env:     env,
 	}
 
-	handleCtx, cancel := context.WithTimeout(ac.ctx, ac.config.HandlerTimeout)
+	handleCtx, cancel := context.WithTimeout(ac.ctx, HandlerTimeout)
 	defer cancel()
 	done := make(chan struct{})
 
@@ -71,9 +68,10 @@ func (ac *ActorBase) handleEnvelope(env *Envelope) {
 	select {
 	case <-done:
 	case <-handleCtx.Done():
-		logger.ERROR("message handling timed out for actor ,", ac.name)
+		logger.ERROR("message handling timed out for actor:", ac.name)
 		replyCallError(ctx, "handler timeout")
-		// 超时视为 actor 故障：自停循环，并通知 gameserver 踢掉该玩家连接
+		// 超时视为 actor 故障：先置关闭阻止新投递，自停循环，并通知 gameserver 踢掉该玩家连接
+		ac.setState(StateClosed)
 		ac.cancel()
 		if ac.manager != nil {
 			ac.manager.notifyFault(ac.name)

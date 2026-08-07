@@ -209,7 +209,7 @@ func (m *Manager) tickAll() {
 			if _, ok := ab.Actor().(core.Persistable); !ok {
 				return true
 			}
-			if err := m.am.Send(name, "persist", core.PersistTick{}); err != nil {
+			if err := m.am.SendSystem(name, "persist", core.PersistTick{}); err != nil {
 				logger.ERROR("persist tick send failed:", err, "actor:", name)
 			}
 			return true

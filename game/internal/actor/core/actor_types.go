@@ -1,29 +1,44 @@
 package core
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
-// IActor 定义 Actor 的基本接口。
-// 客户端消息（MsgClient）由框架统一通过 HandleClientMsg 分发，无需在此声明；
-// 需要接收内部异步消息/RPC 的 actor 实现可选的 MessageHandler 接口。
+// IActor Actor 基础接口：生命周期与类别标识。
 type IActor interface {
-	Start()           // Actor启动时的初始化
-	Stop()            // Actor停止时的清理
-	Category() string // Actor类别标识: "player", "npc", "room" 等
+	Start()           // Actor 启动时的初始化
+	Stop()            // Actor 停止时的清理
+	Category() string // Actor 类别标识: "player", "npc", "room" 等
 }
 
-// MessageHandler 可选的内部消息处理器：实现了它的 actor 可以接收
-// MsgSend（异步内部消息）与 MsgCall（RPC）；未实现时异步消息被丢弃、
-// RPC 自动回复 nil。
+// MessageHandler 可选的内部消息处理器：实现后可通过 Send（异步）与 Call（RPC）接收消息；
+// 未实现时异步消息被丢弃，RPC 自动回复 nil。
 type MessageHandler interface {
 	HandleMessage(ctx *ActorContext, msg interface{})
 }
 
+// IdleTimeoutProvider 可选的空闲超时接口：具体 actor 自定义休眠/关闭超时；
+// 返回 <=0 表示该 actor 永不因空闲自动关闭；未实现时使用包内默认值。
+type IdleTimeoutProvider interface {
+	IdleTimeout() time.Duration
+}
+
 // 定义错误常量
 var (
-	ErrActorNotFound = errors.New("actor not found")       // Actor不存在错误
-	ErrActorClose    = errors.New("actor close")           // Actor已关闭错误
-	ErrSendTimeout   = errors.New("send timeout")          // 发送超时错误
-	ErrSelfCall      = errors.New("self call not allowed") // 禁止 Actor 自调用（防死锁）
+	ErrActorNotFound = errors.New("actor not found")       // Actor 不存在
+	ErrActorClose    = errors.New("actor close")           // Actor 已关闭
+	ErrSendTimeout   = errors.New("send timeout")          // 发送超时
+	ErrSelfCall      = errors.New("self call not allowed") // 禁止 Actor 自调用（防止死锁）
+)
+
+// ActorState Actor 生命周期状态。
+type ActorState int32
+
+const (
+	StateRunning  ActorState = iota // 运行中：正常处理消息
+	StateSleeping                   // 休眠：保留 actor 与数据，等待唤醒或超时关闭
+	StateClosed                     // 已关闭：资源已释放
 )
 
 // MsgKind 消息类型。
@@ -35,12 +50,13 @@ const (
 	MsgCall                  // 内部 RPC 调用
 )
 
-// Envelope 消息信封：携带来源与回包渠道，统一在 actor 队列中流转。
+// Envelope 消息信封：携带来源与回包通道，统一在 actor 队列中流转。
 type Envelope struct {
-	From    string           // 来源：客户端消息为 "server"，内部消息为发起方 actor 名
+	From    string           // 来源：客户端消息为 "server"，内部消息为发起方 actor 名称
 	Kind    MsgKind          // 消息类型
 	Payload interface{}      // 消息内容
-	Reply   chan interface{} // 仅 MsgCall 使用，RPC 回包渠道
+	Reply   chan interface{} // 仅 MsgCall 使用，RPC 回包通道
+	System  bool             // 系统消息（PersistTick/连接生命周期）：不计入业务活动时间
 }
 
 // CallError RPC 调用失败（handler panic / 处理超时）。
@@ -49,3 +65,11 @@ type CallError struct {
 }
 
 func (e *CallError) Error() string { return "call error: " + e.Err }
+
+// ConnDetached 系统消息：连接断开通知，actor 在自身消息循环内清理连接引用。
+type ConnDetached struct{}
+
+// ConnAttached 系统消息：重连时注入新连接，actor 在自身消息循环内换绑连接。
+type ConnAttached struct {
+	Conn any
+}

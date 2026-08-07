@@ -1,6 +1,7 @@
 package actor
 
 import (
+	"errors"
 	"time"
 
 	"simple_game/game/internal/actor/core"
@@ -8,12 +9,12 @@ import (
 	"simple_game/game/pkg/network"
 )
 
-// Player 玩家业务 Actor，实现 core.IActor / core.Persistable / core.MessageHandler。
+// Player 玩家业务 Actor，实现 core.IActor / core.Persistable / core.MessageHandler / core.IdleTimeoutProvider。
 type Player struct {
-	name       string            // 玩家名（登录名/路由名）
+	name       string            // 玩家名（登录名，路由名）
 	uid        int64             // 玩家全局唯一 id（持久化主键，来自账号体系）
 	ip         string            // 玩家 IP 地址
-	conn       network.NetConn   // 网络连接（协议无关）
+	conn       network.NetConn   // 网络连接（协议无关；休眠时为空，重连经 ConnAttached 换绑）
 	store      core.PersistStore // 持久化落地句柄（由 gameserver 创建时注入）
 	dirty      bool              // 脏标记：数据变更后置位，持久化 tick 落地
 	PlayerData *PlayerData       // 玩家数据
@@ -33,12 +34,11 @@ func RegisterAll(am *core.AManager) {
 }
 
 // StartPlayer 创建并启动玩家 Actor，注册到管理器。
-func StartPlayer(am *core.AManager, name string, uid int64, conn network.NetConn, store core.PersistStore) (*Player, error) {
+// 连接不在创建时注入：由握手完成 Attach 后经 ConnAttached 消息换绑，保证 actor 串行。
+func StartPlayer(am *core.AManager, name string, uid int64, store core.PersistStore) (*Player, error) {
 	playerActor := &Player{
 		name:  name,
 		uid:   uid,
-		ip:    conn.RemoteAddr(),
-		conn:  conn,
 		store: store,
 		PlayerData: &PlayerData{
 			UID:         uid,
@@ -46,7 +46,7 @@ func StartPlayer(am *core.AManager, name string, uid int64, conn network.NetConn
 			LastLoginAt: time.Now().Unix(),
 		},
 	}
-	if _, err := core.StartActor(am, name, playerActor, nil); err != nil {
+	if _, err := core.StartActor(am, name, playerActor); err != nil {
 		return nil, err
 	}
 	return playerActor, nil
@@ -64,6 +64,9 @@ func (p *Player) Category() string { return "player" }
 func (p *Player) Stop() {
 	p.flushNow()
 }
+
+// IdleTimeout 实现 core.IdleTimeoutProvider：断线重连宽限/休眠超时 10 分钟。
+func (p *Player) IdleTimeout() time.Duration { return 10 * time.Minute }
 
 // ActorID 实现 core.Persistable：返回玩家全局唯一 uid。
 func (p *Player) ActorID() int64 { return p.uid }
@@ -86,10 +89,23 @@ func (p *Player) SetPersistStore(s core.PersistStore) { p.store = s }
 // MarkDirty 标记玩家数据已变更，等待下一个持久化 tick 落地。
 func (p *Player) MarkDirty() { p.dirty = true }
 
-// HandleMessage 处理内部消息：PersistTick 时按脏标记落地。
+// HandleMessage 处理内部消息：PersistTick 按脏标记落地；ConnDetached/ConnAttached 维护连接引用。
 func (p *Player) HandleMessage(ctx *core.ActorContext, msg interface{}) {
-	if _, ok := msg.(core.PersistTick); ok {
+	switch m := msg.(type) {
+	case core.PersistTick:
 		p.flushIfDirty()
+	case core.ConnDetached:
+		p.conn = nil
+		logger.INFO("player conn detached, actor sleeping, name:", p.name)
+	case core.ConnAttached:
+		conn, ok := m.Conn.(network.NetConn)
+		if !ok {
+			logger.ERROR("ConnAttached with invalid conn, player:", p.name)
+			return
+		}
+		p.conn = conn
+		p.ip = conn.RemoteAddr()
+		logger.INFO("player conn attached, name:", p.name)
 	}
 }
 
@@ -133,7 +149,10 @@ func (p *Player) flushIfDirty() {
 	p.flushNow()
 }
 
-// WriteMessage 实现 core.clientMsgWriter：向该玩家的客户端连接回包。
+// WriteMessage 实现 core.clientMsgWriter：向该玩家的客户端连接回包；休眠无连接时显式报错。
 func (p *Player) WriteMessage(data []byte) error {
+	if p.conn == nil {
+		return errors.New("player has no connection")
+	}
 	return p.conn.WriteMessage(data)
 }
