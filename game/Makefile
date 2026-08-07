@@ -1,9 +1,7 @@
 hello:
 	@echo "hello world"
-pt:
-	@echo "生成协议..."
-	cd ./protos && protoc --go_out=.  --go-grpc_out=. *.proto
 
-pt_rpc:
-	@echo "生成RPC协议..."
-	cd ./protos &&  protoc --go_out=. --go-grpc_out=. *.proto
+# generate proto code: delegate to scripts/gen_proto.ps1 (auto tools + clean + generate)
+pt:
+	@echo "generate proto..."
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/gen_proto.ps1

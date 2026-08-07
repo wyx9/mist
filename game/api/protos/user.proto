@@ -1,0 +1,25 @@
+syntax = "proto3";
+package main;
+
+//option go_package = "./";
+option go_package = "./pt";
+
+
+message LoginReq {
+    int64  UUid =1;
+    string Name = 2;
+    string PassWord =3;
+}
+
+message LoginRes {
+    int64 UUid = 1;
+    int32 Code =2;
+}
+
+
+message HeartReq {
+}
+
+message HeartRes {
+    int64 Time =1;
+}
