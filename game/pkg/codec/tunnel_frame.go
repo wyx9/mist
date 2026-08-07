@@ -5,14 +5,14 @@ import (
 	"errors"
 )
 
-// agent <-> game 长连接内部隧道帧：在现有 4B 长度分帧之上承载多路复用隧道。
+// gateway <-> game 长连接内部隧道帧：在现有 4B 长度分帧之上承载多路复用隧道。
 // 格式：[1B type][2B tunnelID len][tunnelID][payload]
 const (
-	TunnelHandshake    byte = 1 // agent->game 建隧道，payload 为 JSON 身份 {player_name,uid,version}
-	TunnelHandshakeAck byte = 2 // game->agent 握手回执，payload 为 JSON {ok,error?}
+	TunnelHandshake    byte = 1 // gateway->game 建隧道，payload 为 JSON 身份 {player_name,uid,version}
+	TunnelHandshakeAck byte = 2 // game->gateway 握手回执，payload 为 JSON {ok,error?}
 	TunnelData         byte = 3 // 双向业务数据，payload 为业务帧字节
 	TunnelKick         byte = 4 // 任一侧通知关闭某隧道
-	TunnelPing         byte = 5 // agent<->game 保活
+	TunnelPing         byte = 5 // gateway<->game 保活
 	TunnelPong         byte = 6
 )
 

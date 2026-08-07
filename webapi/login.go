@@ -1,4 +1,4 @@
-// world/login.go
+// webapi/login.go
 package main
 
 import (
@@ -20,7 +20,7 @@ import (
 type loginHandler struct {
 	db          *sqlx.DB
 	rdb         *redis.Client
-	agentAddr   string
+	gatewayAddr   string
 	tokenSecret []byte
 	tokenExpire time.Duration
 }
@@ -32,7 +32,7 @@ type loginRequest struct {
 
 type loginResponse struct {
 	Token     string `json:"token"`
-	AgentAddr string `json:"agent_addr"`
+	GatewayAddr string `json:"gateway_addr"`
 }
 
 func (h *loginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +73,7 @@ func (h *loginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 写 Redis 注册信息
-	if err := registerPlayer(h.rdb, req.Name, h.agentAddr, games[0], h.tokenExpire); err != nil {
+	if err := registerPlayer(h.rdb, req.Name, h.gatewayAddr, games[0], h.tokenExpire); err != nil {
 		http.Error(w, "register player failed", http.StatusInternalServerError)
 		return
 	}
@@ -87,7 +87,7 @@ func (h *loginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	resp := loginResponse{
 		Token:     token,
-		AgentAddr: h.agentAddr,
+		GatewayAddr: h.gatewayAddr,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)

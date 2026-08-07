@@ -1,4 +1,4 @@
-// agent/game_link.go
+// gateway/game_link.go
 package main
 
 import (
@@ -23,7 +23,7 @@ const (
 	handshakeTimeout = 5 * time.Second
 )
 
-// gameLinks agent 当前已连接的 game 长连接表 —— addr → *gameLink
+// gameLinks gateway 当前已连接的 game 长连接表 —— addr → *gameLink
 var gameLinks sync.Map
 
 type handshakeResult struct {

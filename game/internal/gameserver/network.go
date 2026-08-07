@@ -1,5 +1,5 @@
 // internal/gameserver/network.go
-// 网络接入：监听 Agent 长连接，隧道帧分发见 tunnel.go。
+// 网络接入：监听 Gateway 长连接，隧道帧分发见 tunnel.go。
 package gameserver
 
 import (
@@ -10,7 +10,7 @@ import (
 	"simple_game/game/pkg/network"
 )
 
-// serve 监听 Agent 长连接并分发给 handler。
+// serve 监听 Gateway 长连接并分发给 handler。
 func (s *Server) serve(addr string) {
 	parts := strings.Split(addr, ":")
 	if len(parts) != 2 {
@@ -45,8 +45,8 @@ func (s *Server) serve(addr string) {
 	}
 }
 
-// ReplyToAgent 通过隧道帧回包给 Agent。
-func (s *Server) ReplyToAgent(tunnelID string, data []byte) error {
+// ReplyToGateway 通过隧道帧回包给 Gateway。
+func (s *Server) ReplyToGateway(tunnelID string, data []byte) error {
 	val, ok := s.tunnels.Load(tunnelID)
 	if !ok {
 		return fmt.Errorf("tunnel not found: %s", tunnelID)

@@ -5,8 +5,8 @@
 这是一个面向商业用途的 Go 游戏服务器框架，由四部分组成：
 
 - `game/` — 核心逻辑服（Actor 模型、路由、网络、基础设施）
-- `agent/` — 网关服务（握手 + 纯字节转发）
-- `world/` — 外部服务（登录/注册/token 签发）
+- `gateway/` — 网关服务（握手 + 纯字节转发）
+- `webapi/` — HTTP API 服务（登录/注册/token 签发）
 - `client/` — 测试客户端（仅用于验证协议）
 
 项目会持续完善，最终目标是接入真实客户端游戏。所有改动必须服务于此目标：不引入玩具式实现，不为短期方便牺牲长期可维护性。
@@ -32,14 +32,14 @@
 | `game/internal/controller` | 业务 handler（薄层） | 框架逻辑 |
 | `game/internal/dispatch` | worker pool 任务分发 | 业务 |
 | `game/pkg/*` | 无业务的基础设施（网络/编解码/协议/日志/存储） | 业务 |
-| `agent/` | 握手 + 纯字节转发 | 任何业务逻辑 |
-| `world/` | 外部服务 | 依赖 `game/internal` |
+| `gateway/` | 握手 + 纯字节转发 | 任何业务逻辑 |
+| `webapi/` | HTTP API 服务 | 依赖 `game/internal` |
 | `client/` | 测试协议 | 参与服务端逻辑 |
 
 禁止越界：
 
 - 网络层不得感知业务消息内容（只处理字节/帧）
-- agent 不做业务（不解析、不重打包业务消息）
+- gateway 不做业务（不解析、不重打包业务消息）
 - controller 不放框架逻辑
 - 跨 actor 通信只能走消息（`ctx.Send` / `ctx.Call`），禁止直接操作其他 actor 内部状态
 

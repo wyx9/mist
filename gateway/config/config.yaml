@@ -1,4 +1,4 @@
-# agent/config/config.yaml
+# gateway/config/config.yaml
 Listeners:
   - Network: tcp
     Addr: "0.0.0.0"

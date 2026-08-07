@@ -7,7 +7,7 @@ import (
 	"github.com/go-redis/redis/v8"
 )
 
-// game 服注册表：game 启动后注册自身地址并定期心跳续期，agent/world 通过
+// game 服注册表：game 启动后注册自身地址并定期心跳续期，gateway/webapi 通过
 // ListFresh 发现可用 game。索引 set 成员为 "ip:port"，每个地址配一个带 TTL 的心跳 key。
 const (
 	ServerSetKey      = "game:servers"

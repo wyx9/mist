@@ -1,4 +1,4 @@
-// world/registry.go
+// webapi/registry.go
 package main
 
 import (
@@ -13,14 +13,14 @@ const redisKeyPrefix = "player:"
 
 // playerRegInfo Redis 中存储的玩家注册信息。
 type playerRegInfo struct {
-	AgentAddr string `json:"agent_addr"`
+	GatewayAddr string `json:"gateway_addr"`
 	GameAddr  string `json:"game_addr"`
 }
 
 // registerPlayer 将玩家信息写入 Redis。
-func registerPlayer(rdb *redis.Client, playerName, agentAddr, gameAddr string, ttl time.Duration) error {
+func registerPlayer(rdb *redis.Client, playerName, gatewayAddr, gameAddr string, ttl time.Duration) error {
 	info := playerRegInfo{
-		AgentAddr: agentAddr,
+		GatewayAddr: gatewayAddr,
 		GameAddr:  gameAddr,
 	}
 	data, err := json.Marshal(info)

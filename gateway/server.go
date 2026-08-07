@@ -1,4 +1,4 @@
-// agent/server.go
+// gateway/server.go
 package main
 
 import (
@@ -30,13 +30,13 @@ type gameHandshakeMsg struct {
 
 // playerReg Redis 中存储的玩家注册信息。
 type playerReg struct {
-	AgentAddr string `json:"agent_addr"`
+	GatewayAddr string `json:"gateway_addr"`
 	GameAddr  string `json:"game_addr"`
 }
 
-// startAgent 启动 Agent 网关服务。
-func startAgent(listeners []listenerCfg, redisCfg redisCfg, tokenSecret string) {
-	// 初始化 Redis 客户端（agent 独立管理，不使用 pkg.RCtx）
+// startGateway 启动 Gateway 网关服务。
+func startGateway(listeners []listenerCfg, redisCfg redisCfg, tokenSecret string) {
+	// 初始化 Redis 客户端（gateway 独立管理，不使用 pkg.RCtx）
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     redisCfg.Addr,
 		Password: redisCfg.PassWord,
@@ -49,10 +49,10 @@ func startAgent(listeners []listenerCfg, redisCfg redisCfg, tokenSecret string) 
 	for _, lc := range listeners {
 		l, err := network.NewListener(lc.Network, lc.Addr, lc.Port)
 		if err != nil {
-			logger.ERROR("agent listener create failed:", lc.Network, lc.Addr, lc.Port, err)
+			logger.ERROR("gateway listener create failed:", lc.Network, lc.Addr, lc.Port, err)
 			continue
 		}
-		logger.INFO("agent listener start:", lc.Network, l.Addr())
+		logger.INFO("gateway listener start:", lc.Network, l.Addr())
 		go serveListener(l, rdb, []byte(tokenSecret))
 	}
 }
@@ -65,10 +65,10 @@ func serveListener(l network.Listener, rdb *redis.Client, secret []byte) {
 			if strings.Contains(err.Error(), "closed") {
 				return
 			}
-			logger.ERROR("agent accept error:", err)
+			logger.ERROR("gateway accept error:", err)
 			continue
 		}
-		logger.INFO("agent accept:", conn.RemoteAddr())
+		logger.INFO("gateway accept:", conn.RemoteAddr())
 		go handleClient(conn, rdb, secret)
 	}
 }

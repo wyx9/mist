@@ -8,7 +8,7 @@ import (
 	"simple_game/game/pkg/logger"
 )
 
-// WorkerPool 消息分发工作池。将 Agent 过来的请求按 tunnelID 哈希
+// WorkerPool 消息分发工作池。将 Gateway 过来的请求按 tunnelID 哈希
 // 分配到固定 worker goroutine，保证同一玩家的消息有序处理。
 type WorkerPool struct {
 	workers []chan func()

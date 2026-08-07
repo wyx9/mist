@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS player_data (
     PRIMARY KEY (actor_id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
 
--- world 服务账号表（name -> uid 映射，uid 作为玩家持久化主键）
+-- webapi 服务账号表（name -> uid 映射，uid 作为玩家持久化主键）
 CREATE TABLE IF NOT EXISTS accounts (
     name       VARCHAR(64) NOT NULL,
     uid        BIGINT      NOT NULL,

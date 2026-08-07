@@ -106,8 +106,8 @@
   <details class="help" open>
     <summary>使用说明</summary>
     <ol>
-      <li>准备后端：redis / mysql → <code>world</code> → <code>agent</code> → <code>game</code></li>
-      <li>填写玩家名 / 密码 → 点「登录 World」→ 自动拿到 token 并填入 agent 地址</li>
+      <li>准备后端：redis / mysql → <code>webapi</code> → <code>gateway</code> → <code>game</code></li>
+      <li>填写玩家名 / 密码 → 点「登录 WebAPI」→ 自动拿到 token 并填入 gateway 地址</li>
       <li>点「连接」→ 自动握手（发送 <code>{"token","version"}</code>）→ 收到 <code>{"status":"ok"}</code></li>
       <li>自动发送登录 <code>CmdLogin</code>，可手动重发 / 心跳 / 自定义消息</li>
       <li>新增协议：在脚本 <code>CMDS</code> / <code>BODY_SCHEMAS</code> 登记即可复用本页测试</li>
@@ -125,18 +125,18 @@
     <div id="status" class="status off">未连接</div>
   </section>
 
-  <h2>World 登录 / 握手</h2>
+  <h2>WebAPI 登录 / 握手</h2>
   <section>
     <div class="row">
-      <div><label>World Host</label><input id="worldHost" value="127.0.0.1"></div>
-      <div><label>World Port</label><input id="worldPort" value="9902"></div>
+      <div><label>WebAPI Host</label><input id="webapiHost" value="127.0.0.1"></div>
+      <div><label>WebAPI Port</label><input id="webapiPort" value="9902"></div>
     </div>
     <div class="row">
       <div><label>玩家名</label><input id="playerName" value="test_player"></div>
       <div><label>密码</label><input id="password" value="123"></div>
     </div>
-    <button class="btn-primary" onclick="worldLogin()">登录 World（获取 Token）</button>
-    <div class="token-box"><label>Token（world 签发，可手动粘贴）</label><textarea id="tokenArea"></textarea></div>
+    <button class="btn-primary" onclick="webapiLogin()">登录 WebAPI（获取 Token）</button>
+    <div class="token-box"><label>Token（webapi 签发，可手动粘贴）</label><textarea id="tokenArea"></textarea></div>
     <label class="chk"><input type="checkbox" id="chkAutoHandshake" checked> 连接后自动握手</label>
     <div id="hsStatus" class="status off">未握手</div>
   </section>
@@ -438,7 +438,7 @@ const $ = id => document.getElementById(id);
 const logList = $('logList');
 const hostEl = $('host'), portEl = $('port'), pathEl = $('path');
 const btnConn = $('btnConn'), statusEl = $('status'), hsStatus = $('hsStatus');
-const worldHost = $('worldHost'), worldPort = $('worldPort');
+const webapiHost = $('webapiHost'), webapiPort = $('webapiPort');
 const playerName = $('playerName'), tokenEl = $('tokenArea');
 const uidEl = $('uid'), nameEl = $('name'), passEl = $('password');
 const chkAutoHandshake = $('chkAutoHandshake'), chkAutoLogin = $('chkAutoLogin');
@@ -612,7 +612,7 @@ function handleTextFrame(text) {
 function handleBinaryFrame(u8) {
   recvCount++;
   updateStats();
-  // 1) 握手 / 系统 JSON（agent 用二进制帧转发 {"status":"ok"}）
+  // 1) 握手 / 系统 JSON（gateway 用二进制帧转发 {"status":"ok"}）
   try {
     const txt = td.decode(u8);
     const obj = JSON.parse(txt);
@@ -651,7 +651,7 @@ function sendHandshake() {
   if (!connected || !ws) { addLog('error', '未连接'); return; }
   const token = tokenEl.value.trim();
   if (!token) {
-    addLog('error', 'Token 为空：先「生成 JWT」或粘贴 world 签发的 token');
+    addLog('error', 'Token 为空：先「生成 JWT」或粘贴 webapi 签发的 token');
     return;
   }
   const json = JSON.stringify({ token: token, version: 1 });
@@ -769,7 +769,7 @@ function heartbeatN(n) {
   for (let i = 0; i < n; i++) setTimeout(sendHeartbeat, i * 200);
 }
 
-// ── World 登录：先拿 token，再连 agent ──
+// ── WebAPI 登录：先拿 token，再连 gateway ──
 function decodeTokenPayload(token) {
   try {
     const parts = token.split('.');
@@ -782,13 +782,13 @@ function decodeTokenPayload(token) {
   } catch (_) { return null; }
 }
 
-async function worldLogin() {
-  const host = worldHost.value.trim() || '127.0.0.1';
-  const port = worldPort.value.trim() || '9902';
+async function webapiLogin() {
+  const host = webapiHost.value.trim() || '127.0.0.1';
+  const port = webapiPort.value.trim() || '9902';
   const name = playerName.value.trim() || 'test_player';
   const pwd = passEl.value.trim() || '123';
   const url = 'http://' + host + ':' + port + '/login';
-  addLog('info', 'World 登录: ' + esc(url) + ' name=' + esc(name));
+  addLog('info', 'WebAPI 登录: ' + esc(url) + ' name=' + esc(name));
   try {
     const resp = await fetch(url, {
       method: 'POST',
@@ -797,13 +797,13 @@ async function worldLogin() {
     });
     const text = await resp.text();
     if (!resp.ok) {
-      addLog('error', 'World 登录失败 (' + resp.status + '): ' + esc(text));
+      addLog('error', 'WebAPI 登录失败 (' + resp.status + '): ' + esc(text));
       return;
     }
     const obj = JSON.parse(text);
-    const token = obj.token, agentAddr = obj.agent_addr;
-    if (!token || !agentAddr) {
-      addLog('error', 'World 响应缺少 token / agent_addr');
+    const token = obj.token, gatewayAddr = obj.gateway_addr;
+    if (!token || !gatewayAddr) {
+      addLog('error', 'WebAPI 响应缺少 token / gateway_addr');
       return;
     }
     tokenEl.value = token;
@@ -816,15 +816,15 @@ async function worldLogin() {
       }
       addLog('info', 'token 信息: sub=' + esc(payload.sub) + ' uid=' + payload.uid);
     }
-    const parts = agentAddr.split(':');
+    const parts = gatewayAddr.split(':');
     if (parts.length === 2) {
       hostEl.value = parts[0];
       portEl.value = parts[1];
     }
-    addLog('info', '已获取 token，agent 地址: ' + esc(agentAddr));
+    addLog('info', '已获取 token，gateway 地址: ' + esc(gatewayAddr));
     if (!connected) connect();
   } catch (e) {
-    addLog('error', 'World 登录异常: ' + esc(e.message));
+    addLog('error', 'WebAPI 登录异常: ' + esc(e.message));
   }
 }
 

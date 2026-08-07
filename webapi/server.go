@@ -1,4 +1,4 @@
-// world/server.go
+// webapi/server.go
 package main
 
 import (
@@ -11,12 +11,12 @@ import (
 	"simple_game/game/pkg/logger"
 )
 
-// startWorld 启动 World HTTP 服务。
-func startWorld(addr string, db *sqlx.DB, rdb *redis.Client, agentAddr, tokenSecret string, tokenExpire time.Duration) {
+// startWebAPI 启动 WebAPI HTTP 服务。
+func startWebAPI(addr string, db *sqlx.DB, rdb *redis.Client, gatewayAddr, tokenSecret string, tokenExpire time.Duration) {
 	handler := &loginHandler{
 		db:          db,
 		rdb:         rdb,
-		agentAddr:   agentAddr,
+		gatewayAddr:   gatewayAddr,
 		tokenSecret: []byte(tokenSecret),
 		tokenExpire: tokenExpire,
 	}
@@ -27,9 +27,9 @@ func startWorld(addr string, db *sqlx.DB, rdb *redis.Client, agentAddr, tokenSec
 		_, _ = w.Write([]byte("ok"))
 	}))
 
-	logger.INFO("world http server starting on", addr)
+	logger.INFO("webapi http server starting on", addr)
 	if err := http.ListenAndServe(addr, nil); err != nil {
-		logger.ERROR("world http server failed:", err)
+		logger.ERROR("webapi http server failed:", err)
 	}
 }
 

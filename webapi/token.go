@@ -1,4 +1,4 @@
-// world/token.go
+// webapi/token.go
 package main
 
 import (
@@ -20,8 +20,8 @@ func generateToken(playerName string, uid int64, secret []byte, expireDuration t
 	return token.SignedString(secret)
 }
 
-// verifyWorldToken 验证 JWT token（World 端保留验证能力用于调试）。
-func verifyWorldToken(tokenStr string, secret []byte) (string, error) {
+// verifyToken 验证 JWT token（WebAPI 端保留验证能力用于调试）。
+func verifyToken(tokenStr string, secret []byte) (string, error) {
 	token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])

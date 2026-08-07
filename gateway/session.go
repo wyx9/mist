@@ -1,4 +1,4 @@
-// agent/session.go
+// gateway/session.go
 package main
 
 import (

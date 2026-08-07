@@ -16,7 +16,7 @@ import (
 	"simple_game/game/pkg/network"
 )
 
-// gatewayLink agent 长连接：一条连接上多路复用多个玩家隧道。
+// gatewayLink gateway 长连接：一条连接上多路复用多个玩家隧道。
 type gatewayLink struct {
 	conn    network.NetConn
 	writeMu sync.Mutex
@@ -29,7 +29,7 @@ func (l *gatewayLink) writeFrame(typ byte, tunnelID string, data []byte) error {
 	return l.conn.WriteMessage(codec.PackTunnelFrame(typ, tunnelID, data))
 }
 
-// TunnelConn 虚拟玩家连接：实现 network.NetConn，写操作封装为隧道帧发往 agent 长连接。
+// TunnelConn 虚拟玩家连接：实现 network.NetConn，写操作封装为隧道帧发往 gateway 长连接。
 type TunnelConn struct {
 	link     *gatewayLink
 	tunnelID string
@@ -60,14 +60,14 @@ func (c *TunnelConn) SetWriteDeadline(t time.Time) error { return nil }
 
 var _ network.NetConn = (*TunnelConn)(nil)
 
-// tunnelHandshake agent 转发来的身份握手。
+// tunnelHandshake gateway 转发来的身份握手。
 type tunnelHandshake struct {
 	PlayerName string `json:"player_name"`
 	UID        int64  `json:"uid"`
 	Version    int    `json:"version"`
 }
 
-// handleGatewayLink 处理一条 agent 长连接：读隧道帧并分发。
+// handleGatewayLink 处理一条 gateway 长连接：读隧道帧并分发。
 func (s *Server) handleGatewayLink(link *gatewayLink) {
 	defer link.conn.Close()
 	for {
@@ -189,7 +189,7 @@ func (s *Server) ackHandshake(link *gatewayLink, tunnelID string, ok bool, errMs
 	return link.writeFrame(codec.TunnelHandshakeAck, tunnelID, payload)
 }
 
-// closeTunnel 硬关闭指定隧道：关 actor、删全局与所属 link 索引，并通知 agent 关闭客户端连接。
+// closeTunnel 硬关闭指定隧道：关 actor、删全局与所属 link 索引，并通知 gateway 关闭客户端连接。
 // 用于故障踢线等需要立即销毁 actor 的路径。
 func (s *Server) closeTunnel(tunnelID string, tc *TunnelConn) {
 	_ = s.ActorManner.CloseActor(tunnelID, 5*time.Second)
@@ -197,7 +197,7 @@ func (s *Server) closeTunnel(tunnelID string, tc *TunnelConn) {
 	s.tunnels.Delete(tunnelID)
 	if tc.link != nil {
 		tc.link.tunnels.Delete(tunnelID)
-		// 通知 agent 关闭该玩家客户端连接
+		// 通知 gateway 关闭该玩家客户端连接
 		_ = tc.link.writeFrame(codec.TunnelKick, tunnelID, nil)
 	}
 	s.uidByTunnel.Delete(tunnelID)

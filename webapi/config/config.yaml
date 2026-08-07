@@ -1,9 +1,9 @@
-# world/config/config.yaml
+# webapi/config/config.yaml
 Http:
   Addr: "127.0.0.1"
   Port: "9902"
 
-AgentAddr: "127.0.0.1:8889"
+GatewayAddr: "127.0.0.1:8889"
 TokenSecret: "shared-secret-key"
 TokenExpire: 24h
 
