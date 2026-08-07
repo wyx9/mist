@@ -3,12 +3,20 @@ package protocol
 // 业务命令号，0 保留。
 // 请求命令号与响应命令号成对定义：响应 = 请求 + 1。
 const (
-	CmdLogin    uint16 = 1
-	CmdLoginRsp        = CmdLogin + 1 // 2
-	CmdHeart    uint16 = 3
-	CmdHeartRsp        = CmdHeart + 1 // 4
-	// CmdError 系统保留错误响应命令号：路由层统一出错时下发，
-	// body 为 pt.ErrorRes；不参与业务注册与 ReqRsp 绑定。
+	_ uint16 = iota // 0 保留
+	CmdLogin
+	CmdLoginRsp
+
+	CmdHeart
+	CmdHeartRsp // 4
+
+	CmdSendChat
+	CmdSendChatRsp
+)
+
+// CmdError 系统保留错误响应命令号：路由层统一出错时下发，
+// body 为 pt.ErrorRes；不参与业务注册与 ReqRsp 绑定。
+const (
 	CmdError uint16 = 0xFFFF
 )
 
@@ -22,8 +30,9 @@ const (
 // ReqRsp 请求→响应命令号绑定表（只读，勿修改）。
 // 不符合“响应 = 请求 + 1”默认规则的协议在此显式登记。
 var ReqRsp = map[uint16]uint16{
-	CmdLogin: CmdLoginRsp,
-	CmdHeart: CmdHeartRsp,
+	CmdLogin:    CmdLoginRsp,
+	CmdHeart:    CmdHeartRsp,
+	CmdSendChat: CmdSendChatRsp,
 }
 
 // RspCmd 返回请求对应的响应命令号；未绑定时默认 = 请求命令号 + 1。

@@ -1,0 +1,15 @@
+syntax = "proto3";
+package main;
+
+//option go_package = "./";
+option go_package = "./pt";
+
+message SendChatReq {
+  int64  UUid =1;
+  string Msg = 2;
+}
+
+message SendChatRsp {
+  int64  UUid =1;
+}
+

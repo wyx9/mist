@@ -13,4 +13,6 @@ import (
 func RegisterAll() {
 	route.Register[*actor.Player, *pt.LoginReq](protocol.CmdLogin, LoginController)
 	route.Register[*actor.Player, *pt.HeartReq](protocol.CmdHeart, TestController)
+
+	route.Register[*actor.Player, *pt.SendChatReq](protocol.CmdSendChat, ChatController)
 }

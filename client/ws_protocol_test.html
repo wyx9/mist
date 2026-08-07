@@ -161,6 +161,12 @@
     </div>
   </section>
 
+  <h2>Chat</h2>
+  <section>
+    <div><label>消息内容</label><input id="chatMsg" placeholder="输入聊天内容"></div>
+    <button class="btn-primary" onclick="sendChat()">发送 Chat (CmdSendChat)</button>
+  </section>
+
   <h2>自定义消息（复用）</h2>
   <section>
     <div class="row">
@@ -349,6 +355,8 @@ const BODY_SCHEMAS = {
   HeartReq: { fields: [] },
   HeartRes: { fields: [['Time', 1, 'int64']] },
   ErrorRes: { fields: [['Code', 1, 'int32'], ['Msg', 2, 'string']] },
+  SendChatReq: { fields: [['UUid', 1, 'int64'], ['Msg', 2, 'string']] },
+  SendChatRsp: { fields: [['UUid', 1, 'int64']] },
 };
 
 function encodeBody(typeName, obj) {
@@ -399,6 +407,8 @@ const CMDS = [
   { cmd: 2, name: 'CmdLoginRsp', req: null, rsp: 'LoginRes' },
   { cmd: 3, name: 'CmdHeart', req: 'HeartReq', rsp: 'HeartRes' },
   { cmd: 4, name: 'CmdHeartRsp', req: null, rsp: 'HeartRes' },
+  { cmd: 5, name: 'CmdSendChat', req: 'SendChatReq', rsp: 'SendChatRsp' },
+  { cmd: 6, name: 'CmdSendChatRsp', req: null, rsp: 'SendChatRsp' },
   { cmd: 0xffff, name: 'CmdError', req: null, rsp: 'ErrorRes' },
 ];
 const TYPE_NAMES = { 1: 'Req', 2: 'Rsp', 3: 'Push' };
@@ -433,6 +443,7 @@ const playerName = $('playerName'), tokenEl = $('tokenArea');
 const uidEl = $('uid'), nameEl = $('name'), passEl = $('password');
 const chkAutoHandshake = $('chkAutoHandshake'), chkAutoLogin = $('chkAutoLogin');
 const btnAutoHb = $('btnAutoHb');
+const chatMsg = $('chatMsg');
 const msgTypeSel = $('msgTypeSel'), cmdSel = $('cmdSel'), cmdNum = $('cmdNum');
 const custMsgID = $('custMsgID'), custUID = $('custUID');
 const bodyJson = $('bodyJson'), bodyHex = $('bodyHex');
@@ -453,6 +464,8 @@ const SAMPLES = {
   HeartReq: {},
   HeartRes: { Time: 0 },
   ErrorRes: { Code: 1, Msg: 'error message' },
+  SendChatReq: { UUid: 12312312, Msg: 'hello' },
+  SendChatRsp: { UUid: 12312312 },
 };
 
 function nextMsgID() { return ++seq; }
@@ -686,6 +699,24 @@ function sendHeartbeat() {
     cmd: 3,
     body: new Uint8Array(0),
   }, '心跳');
+}
+
+function sendChat() {
+  const uid = parseInt(uidEl.value) || 12312312;
+  const msg = chatMsg.value.trim();
+  if (!msg) { addLog('error', 'Chat 消息为空，先输入内容'); return; }
+  let body;
+  try {
+    body = encodeBody('SendChatReq', { UUid: uid, Msg: msg });
+  } catch (e) { addLog('error', 'Chat body 编码失败: ' + esc(e.message)); return; }
+  sendMsg({
+    msgType: 1,
+    msgID: nextMsgID(),
+    uid: uid,
+    cmd: 5,
+    body: body,
+  }, 'Chat');
+  chatMsg.value = '';
 }
 
 function sendCustom() {
