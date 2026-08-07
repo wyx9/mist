@@ -40,11 +40,11 @@ type Server struct {
 	// 持久化管理器（生命周期跟随 Server）
 	persist *persist.Manager
 
-	// Agent 连接表 — tunnelID → network.NetConn
+	// Gateway 连接表 — tunnelID → network.NetConn
 	// 玩家隧道表 —— tunnelID → *TunnelConn
 	tunnels sync.Map
 
-	// Agent 长连接表 —— *gatewayLink → *gatewayLink
+	// Gateway 长连接表 —— *gatewayLink → *gatewayLink
 	links sync.Map
 
 	// 注册到 Redis 的 game 地址
@@ -84,7 +84,7 @@ func NewServer() *Server {
 // Instance 返回全局 Server 单例。未初始化时返回 nil。
 func Instance() *Server { return instance }
 
-var cfgPath = "game/config/config.yaml"
+var cfgPath = findConfigPath("game")
 
 // Start 启动 Game 服务。按依赖顺序初始化所有组件。
 func (s *Server) Start() error {
@@ -165,7 +165,7 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 		_ = s.listener.Close()
 	}
 
-	// 2. 关闭所有 Agent 长连接（触发其上隧道清理）
+	// 2. 关闭所有 Gateway 长连接（触发其上隧道清理）
 	s.links.Range(func(key, val interface{}) bool {
 		_ = val.(*gatewayLink).conn.Close()
 		return true

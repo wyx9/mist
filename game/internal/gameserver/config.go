@@ -3,6 +3,7 @@ package gameserver
 
 import (
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
@@ -43,4 +44,24 @@ func LoadGameConfig(path string) (*GameConfig, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// findConfigPath 探测配置文件路径，支持从仓库根目录、服务目录或可执行文件所在目录启动。
+func findConfigPath(name string) string {
+	exeDir := ""
+	if exe, err := os.Executable(); err == nil {
+		exeDir = filepath.Dir(exe)
+	}
+	candidates := []string{
+		filepath.Join(name, "config", "config.yaml"),
+		filepath.Join("config", "config.yaml"),
+		filepath.Join(exeDir, "config", "config.yaml"),
+		filepath.Join(exeDir, name, "config", "config.yaml"),
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return candidates[0]
 }
