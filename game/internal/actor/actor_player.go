@@ -71,6 +71,9 @@ func (p *Player) IdleTimeout() time.Duration { return 10 * time.Minute }
 // ActorID 实现 core.Persistable：返回玩家全局唯一 uid。
 func (p *Player) ActorID() int64 { return p.uid }
 
+// Name 返回玩家名。
+func (p *Player) Name() string { return p.name }
+
 // PersistData 实现 core.Persistable：返回待序列化的玩家数据。
 func (p *Player) PersistData() any { return p.PlayerData }
 
