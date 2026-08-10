@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"simple_game/game/configs"
 	"simple_game/game/internal/actor"
 	core "simple_game/game/internal/actor/core"
 	"simple_game/game/internal/controller"
@@ -105,6 +106,10 @@ func (s *Server) Start() error {
 		cfg.MySql.User, cfg.MySql.PassWord, cfg.MySql.Addr, cfg.MySql.Port, cfg.MySql.DBName)
 	mysql.MysqlStart(dsn)
 	redis.RedisStart(cfg.Redis.Addr, cfg.Redis.PassWord, cfg.Redis.DB)
+	if err := configs.Init(redis.RedisClient); err != nil {
+		return fmt.Errorf("init configs: %w", err)
+	}
+	configs.StartWatch()
 
 	// Phase 3: 业务初始化
 	controller.RegisterAll()
@@ -179,6 +184,9 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 	if s.persist != nil {
 		s.persist.Stop(10 * time.Second)
 	}
+
+	// 4.5 停配置热更监听（须在关闭 Redis 连接之前）
+	configs.StopWatch()
 
 	// 5. 关闭 worker pool
 	if s.workerPool != nil {

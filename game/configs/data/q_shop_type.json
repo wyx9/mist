@@ -1,0 +1,26 @@
+[
+  {
+    "q_main_type": 1,
+    "q_name": "杂货铺",
+    "q_reward_log_reason": "SHOP_BUY",
+    "q_type": 0
+  },
+  {
+    "q_main_type": 2,
+    "q_name": "道具商店",
+    "q_reward_log_reason": "SHOP_BUY",
+    "q_type": 0
+  },
+  {
+    "q_main_type": 3,
+    "q_name": "免费商店",
+    "q_reward_log_reason": "SHOP_BUY",
+    "q_type": 0
+  },
+  {
+    "q_main_type": 4,
+    "q_name": "英雄商店",
+    "q_reward_log_reason": "SHOP_BUY",
+    "q_type": 0
+  }
+]
