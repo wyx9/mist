@@ -3,6 +3,8 @@ package core
 import (
 	"errors"
 	"time"
+
+	"simple_game/game/pkg/timer"
 )
 
 // IActor Actor 基础接口：生命周期与类别标识。
@@ -22,6 +24,19 @@ type MessageHandler interface {
 // 返回 <=0 表示该 actor 永不因空闲自动关闭；未实现时使用包内默认值。
 type IdleTimeoutProvider interface {
 	IdleTimeout() time.Duration
+}
+
+// TimerHandle actor 内部定时器句柄（消息式）：到期后把 msg 投递给当前 actor 自己，
+// 在 HandleMessage 中按消息类型处理；纯内存，进程重启即消失。
+type TimerHandle interface {
+	After(d time.Duration, msg interface{}) *timer.Task // 一次性
+	Every(d time.Duration, msg interface{}) *timer.Task // 周期
+	Cancel(task *timer.Task)                            // 取消
+}
+
+// SetTimerHandle 可选注入接口：StartActor 创建时注入绑定当前 actor 的定时器句柄。
+type SetTimerHandle interface {
+	SetTimerHandle(h TimerHandle)
 }
 
 // 定义错误常量

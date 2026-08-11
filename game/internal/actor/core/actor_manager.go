@@ -9,6 +9,7 @@ import (
 
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/protocol"
+	"simple_game/game/pkg/timer"
 	"simple_game/game/pkg/uid"
 )
 
@@ -22,6 +23,7 @@ type AManager struct {
 	actorMap     sync.Map // name → *ActorBase 主存储
 	categories   sync.Map // categoryName(string) → *categoryIndex
 	mu           sync.RWMutex
+	sched        *timer.Scheduler  // actor 内部内存定时调度器（惰性创建）
 	faultHandler func(name string) // actor 故障回调（handler 超时等），由 gameserver 设置
 	sweeperCtx   context.Context
 	sweeperStop  context.CancelFunc
@@ -54,6 +56,9 @@ func (am *AManager) Start() {
 	}
 	am.sweeperCtx, am.sweeperStop = context.WithCancel(context.Background())
 	am.sweeperRun = true
+	if am.sched == nil {
+		am.sched = timer.NewScheduler()
+	}
 	go am.sweepLoop()
 }
 
@@ -61,11 +66,14 @@ func (am *AManager) Start() {
 func (am *AManager) Stop() {
 	am.mu.Lock()
 	defer am.mu.Unlock()
-	if !am.sweeperRun {
-		return
+	if am.sweeperRun {
+		am.sweeperStop()
+		am.sweeperRun = false
 	}
-	am.sweeperStop()
-	am.sweeperRun = false
+	if am.sched != nil {
+		am.sched.Stop()
+		am.sched = nil
+	}
 }
 
 func (am *AManager) sweepLoop() {
@@ -206,10 +214,63 @@ func (am *AManager) CloseActor(name string, timeout time.Duration) error {
 	err := ab.Shutdown(timeout)
 	// 无论关闭结果如何都从注册表移除，避免残留已关闭的 Actor。
 	am.Remove(name)
+	am.cancelActorTimers(name)
 	if err != nil && !errors.Is(err, ErrActorClose) {
 		logger.ERROR("close actor error:", err, "name:", name)
 	}
 	return err
+}
+
+// timerHandle 绑定单个 actor 的定时器句柄：到期后向该 actor 自己投递消息。
+type timerHandle struct {
+	am   *AManager
+	name string
+}
+
+// After 注册一次性定时消息：d 后投递 msg 到当前 actor 的 HandleMessage。
+func (h *timerHandle) After(d time.Duration, msg interface{}) *timer.Task {
+	return h.am.scheduler().After(h.name, d, func() {
+		h.deliver(msg)
+	})
+}
+
+// Every 注册周期定时消息：每隔 d 投递一次 msg，直到 Cancel。
+func (h *timerHandle) Every(d time.Duration, msg interface{}) *timer.Task {
+	return h.am.scheduler().Every(h.name, d, func() {
+		h.deliver(msg)
+	})
+}
+
+// Cancel 取消一个定时任务。
+func (h *timerHandle) Cancel(task *timer.Task) {
+	task.Stop()
+}
+
+func (h *timerHandle) deliver(msg interface{}) {
+	if err := h.am.Send(h.name, "timer", msg); err != nil {
+		// actor 可能已关闭，属正常竞态，DEBUG 级别即可
+		logger.DEBUG("actor timer deliver failed:", err, "actor:", h.name)
+	}
+}
+
+// scheduler 惰性获取内存定时调度器。
+func (am *AManager) scheduler() *timer.Scheduler {
+	am.mu.Lock()
+	defer am.mu.Unlock()
+	if am.sched == nil {
+		am.sched = timer.NewScheduler()
+	}
+	return am.sched
+}
+
+// cancelActorTimers 取消某 actor 的全部待执行定时器（关闭时调用）。
+func (am *AManager) cancelActorTimers(name string) {
+	am.mu.RLock()
+	sched := am.sched
+	am.mu.RUnlock()
+	if sched != nil {
+		sched.CancelAll(name)
+	}
 }
 
 // Detach 连接断开：actor 保留进入休眠（重连宽限开始计时），并向 actor 投递 ConnDetached 清理连接引用。
@@ -253,6 +314,10 @@ func StartActor[A IActor](am *AManager, name string, actor A) (*ActorBase, error
 	if p, ok := any(actor).(interface{ ActorID() int64 }); ok && p.ActorID() != 0 {
 		id = p.ActorID()
 	}
+	// 定时器句柄须在 NewActorBase（触发 Start）之前注入，保证 Start 内也能排定时器。
+	if p, ok := any(actor).(SetTimerHandle); ok {
+		p.SetTimerHandle(am.newTimerHandle(name))
+	}
 	ab := NewActorBase(name, actor)
 	if ab == nil {
 		return nil, fmt.Errorf("create actor base failed: %s", name)
@@ -266,6 +331,11 @@ func StartActor[A IActor](am *AManager, name string, actor A) (*ActorBase, error
 		return nil, err
 	}
 	return ab, nil
+}
+
+// newTimerHandle 创建绑定指定 actor 名的定时器句柄。
+func (am *AManager) newTimerHandle(name string) TimerHandle {
+	return &timerHandle{am: am, name: name}
 }
 
 // RangeByCategory 遍历指定类别的所有 Actor。回调返回 false 时停止遍历。
