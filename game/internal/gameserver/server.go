@@ -26,6 +26,7 @@ import (
 	"simple_game/game/internal/persist"
 	"simple_game/game/pkg/network"
 	"simple_game/game/pkg/registry"
+	"simple_game/game/pkg/timer"
 )
 
 // Server Game 逻辑服单例。聚合所有组件，统一生命周期。
@@ -114,6 +115,8 @@ func (s *Server) Start() error {
 	// Phase 3: 业务初始化
 	controller.RegisterAll()
 	actor.RegisterAll(s.ActorManner)
+	actor.StartDaemonActor(s.ActorManner)
+
 	// actor 故障（handler 超时）→ 异步踢掉该玩家连接
 	s.ActorManner.SetFaultHandler(func(name string) {
 		go s.kickFaultedTunnel(name)
@@ -131,6 +134,10 @@ func (s *Server) Start() error {
 
 	// Phase 4: 对外服务 (goroutine)
 	s.ctx, s.cancel = context.WithCancel(context.Background())
+
+	// 全局定时器轮询协程：每秒从 Redis 取到期任务投递给目标 actor
+	s.wg.Add(1)
+	go s.runGlobalTimer()
 
 	go rpc.StartGRPC()
 
@@ -227,6 +234,17 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 
 	logger.INFO("Game server stopped")
 	return nil
+}
+
+// runGlobalTimer 全局定时器轮询协程入口（随 s.ctx 取消而停止）。
+func (s *Server) runGlobalTimer() {
+	defer s.wg.Done()
+	timer.RunGlobal(s.ctx, redis.RedisClient, timer.GlobalPollInterval, s.deliverGlobalTimer)
+}
+
+// deliverGlobalTimer 全局定时器到期投递：向目标 actor 投递 GlobalFire 包装消息。
+func (s *Server) deliverGlobalTimer(t *timer.GlobalTask) error {
+	return s.ActorManner.Send(t.Target, "timer", &timer.GlobalFire{ID: t.ID, Tag: t.Tag, Payload: t.Payload})
 }
 
 // gameHeartbeat 周期向 Redis 续期 game 地址。

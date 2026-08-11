@@ -5,32 +5,22 @@ import (
 	"time"
 
 	"simple_game/game/internal/actor/core"
+	"simple_game/game/internal/actor/entity"
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/network"
 )
 
 // Player 玩家业务 Actor，实现 core.IActor / core.Persistable / core.MessageHandler / core.IdleTimeoutProvider。
 type Player struct {
-	name       string            // 玩家名（登录名，路由名）
-	uid        int64             // 玩家全局唯一 id（持久化主键，来自账号体系）
-	ip         string            // 玩家 IP 地址
-	conn       network.NetConn   // 网络连接（协议无关；休眠时为空，重连经 ConnAttached 换绑）
-	store      core.PersistStore // 持久化落地句柄（由 gameserver 创建时注入）
-	dirty      bool              // 脏标记：数据变更后置位，持久化 tick 落地
-	PlayerData *PlayerData       // 玩家数据
-}
-
-// PlayerData 玩家数据，序列化后存储。
-type PlayerData struct {
-	UID         int64  // 玩家唯一 id
-	Name        string // 玩家名
-	LastLoginAt int64  // 最后登录时间
-}
-
-// RegisterAll 统一注册业务 Actor 类别（Player），Server Phase 3 调用。
-func RegisterAll(am *core.AManager) {
-	am.RegisterCategory(&Player{})
-	logger.INFO("actor RegisterAll complete")
+	name       string             // 玩家名（登录名，路由名）
+	uid        int64              // 玩家全局唯一 id（持久化主键，来自账号体系）
+	ip         string             // 玩家 IP 地址
+	conn       network.NetConn    // 网络连接（协议无关；休眠时为空，重连经 ConnAttached 换绑）
+	store      core.PersistStore  // 持久化落地句柄（由 gameserver 创建时注入）
+	mgr        *core.AManager     // 框架句柄：Stop 时向常驻 Room actor 投递离开通知
+	timer      core.TimerHandle   // actor 内部定时器句柄（消息式，框架注入）
+	dirty      bool               // 脏标记：数据变更后置位，持久化 tick 落地
+	PlayerData *entity.PlayerData // 玩家数据
 }
 
 // StartPlayer 创建并启动玩家 Actor，注册到管理器。
@@ -40,7 +30,8 @@ func StartPlayer(am *core.AManager, name string, uid int64, store core.PersistSt
 		name:  name,
 		uid:   uid,
 		store: store,
-		PlayerData: &PlayerData{
+		mgr:   am,
+		PlayerData: &entity.PlayerData{
 			UID:         uid,
 			Name:        name,
 			LastLoginAt: time.Now().Unix(),
@@ -55,14 +46,18 @@ func StartPlayer(am *core.AManager, name string, uid int64, store core.PersistSt
 // Start 玩家 Actor 启动时加载数据（Redis -> MySQL -> 默认值）。
 func (p *Player) Start() {
 	p.loadPlayer()
+
+	p.GetTimer().After(3*time.Second, timerTest{})
+
 }
 
 // Category 返回 Actor 类别标识。
-func (p *Player) Category() string { return "player" }
+func (p *Player) Category() string { return PlayerActorName }
 
-// Stop 玩家 Actor 停止时同步落地兜底。
+// Stop 玩家 Actor 停止时同步落地兜底，并通知常驻 Room actor 移除自己。
 func (p *Player) Stop() {
 	p.flushNow()
+	p.notifyRoomLeave()
 }
 
 // IdleTimeout 实现 core.IdleTimeoutProvider：断线重连宽限/休眠超时 10 分钟。
@@ -89,12 +84,23 @@ func (p *Player) PersistDBName() string { return "" }
 // SetPersistStore 实现 core.SetPersistStore：创建阶段注入，须在 Start 之前完成。
 func (p *Player) SetPersistStore(s core.PersistStore) { p.store = s }
 
+// SetTimerHandle 实现 core.SetTimerHandle：创建阶段注入 actor 内部定时器句柄。
+func (p *Player) SetTimerHandle(h core.TimerHandle) { p.timer = h }
+
+func (p *Player) GetTimer() core.TimerHandle {
+	return p.timer
+}
+
+type timerTest struct{}
+
 // MarkDirty 标记玩家数据已变更，等待下一个持久化 tick 落地。
 func (p *Player) MarkDirty() { p.dirty = true }
 
 // HandleMessage 处理内部消息：PersistTick 按脏标记落地；ConnDetached/ConnAttached 维护连接引用。
 func (p *Player) HandleMessage(ctx *core.ActorContext, msg interface{}) {
 	switch m := msg.(type) {
+	case timerTest:
+		logger.INFO("player timer test")
 	case core.PersistTick:
 		p.flushIfDirty()
 	case core.ConnDetached:
@@ -150,6 +156,17 @@ func (p *Player) flushIfDirty() {
 		return
 	}
 	p.flushNow()
+}
+
+// notifyRoomLeave 玩家 actor 关闭时通知常驻 Room actor 移除自己。
+// 仅 actor 真正关闭（休眠超时/踢线/停机）触发；纯断开不触发。
+func (p *Player) notifyRoomLeave() {
+	if p.mgr == nil {
+		return
+	}
+	if err := p.mgr.Send(RoomActorName, p.name, entity.RoomPlayerLeave{UID: p.uid}); err != nil {
+		logger.ERROR("notify room leave failed:", err, "name:", p.name)
+	}
 }
 
 // WriteMessage 实现 core.clientMsgWriter：向该玩家的客户端连接回包；休眠无连接时显式报错。
