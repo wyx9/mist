@@ -14,6 +14,11 @@ const (
 	CmdSendChatRsp
 )
 
+// 推送命令号（MsgTypePush，服务端主动下发），与请求/响应命令号隔离。
+const (
+	CmdChatPush uint16 = iota + 10000
+)
+
 // CmdError 系统保留错误响应命令号：路由层统一出错时下发，
 // body 为 pt.ErrorRes；不参与业务注册与 ReqRsp 绑定。
 const (

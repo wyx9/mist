@@ -61,6 +61,35 @@ func (c *HandlerContext[A]) Cmd() uint16 {
 	return c.Msg.Cmd
 }
 
+// ClientWriter 具备向客户端写消息能力的 actor（如 *actor.Player 持有连接）。
+type ClientWriter interface {
+	WriteMessage(data []byte) error
+}
+
+// Push 服务端主动向当前玩家客户端推送消息（MsgTypePush）。
+// 只能在 actor 串行循环内调用（controller handler 满足），写入无锁竞争；
+// actor 不具备写连接能力时返回错误。
+func (c *HandlerContext[A]) Push(cmd uint16, msg proto.Message) error {
+	body, err := proto.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("push marshal: %w", err)
+	}
+	out, err := protocol.EncodeMsg(&protocol.Msg{
+		MsgType: protocol.MsgTypePush,
+		Cmd:     cmd,
+		UID:     c.UID(),
+		Body:    body,
+	})
+	if err != nil {
+		return fmt.Errorf("push encode: %w", err)
+	}
+	w, ok := any(c.Actor).(ClientWriter)
+	if !ok {
+		return errors.New("actor does not support client push")
+	}
+	return w.WriteMessage(out)
+}
+
 // unmarshalError 标记 body 反序列化失败，供 Route 区分 BadRequest / ServerError。
 type unmarshalError struct{ err error }
 

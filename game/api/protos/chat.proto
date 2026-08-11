@@ -13,3 +13,8 @@ message SendChatRsp {
   int64  UUid =1;
 }
 
+
+message ChatNtf {
+  int64  UUid =1;
+  string  Msg =2;
+}

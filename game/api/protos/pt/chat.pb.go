@@ -117,6 +117,58 @@ func (x *SendChatRsp) GetUUid() int64 {
 	return 0
 }
 
+type ChatNtf struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UUid          int64                  `protobuf:"varint,1,opt,name=UUid,proto3" json:"UUid,omitempty"`
+	Msg           string                 `protobuf:"bytes,2,opt,name=Msg,proto3" json:"Msg,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChatNtf) Reset() {
+	*x = ChatNtf{}
+	mi := &file_chat_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChatNtf) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChatNtf) ProtoMessage() {}
+
+func (x *ChatNtf) ProtoReflect() protoreflect.Message {
+	mi := &file_chat_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChatNtf.ProtoReflect.Descriptor instead.
+func (*ChatNtf) Descriptor() ([]byte, []int) {
+	return file_chat_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ChatNtf) GetUUid() int64 {
+	if x != nil {
+		return x.UUid
+	}
+	return 0
+}
+
+func (x *ChatNtf) GetMsg() string {
+	if x != nil {
+		return x.Msg
+	}
+	return ""
+}
+
 var File_chat_proto protoreflect.FileDescriptor
 
 const file_chat_proto_rawDesc = "" +
@@ -127,7 +179,10 @@ const file_chat_proto_rawDesc = "" +
 	"\x04UUid\x18\x01 \x01(\x03R\x04UUid\x12\x10\n" +
 	"\x03Msg\x18\x02 \x01(\tR\x03Msg\"!\n" +
 	"\vSendChatRsp\x12\x12\n" +
-	"\x04UUid\x18\x01 \x01(\x03R\x04UUidB\x06Z\x04./ptb\x06proto3"
+	"\x04UUid\x18\x01 \x01(\x03R\x04UUid\"/\n" +
+	"\aChatNtf\x12\x12\n" +
+	"\x04UUid\x18\x01 \x01(\x03R\x04UUid\x12\x10\n" +
+	"\x03Msg\x18\x02 \x01(\tR\x03MsgB\x06Z\x04./ptb\x06proto3"
 
 var (
 	file_chat_proto_rawDescOnce sync.Once
@@ -141,10 +196,11 @@ func file_chat_proto_rawDescGZIP() []byte {
 	return file_chat_proto_rawDescData
 }
 
-var file_chat_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_chat_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_chat_proto_goTypes = []any{
 	(*SendChatReq)(nil), // 0: main.SendChatReq
 	(*SendChatRsp)(nil), // 1: main.SendChatRsp
+	(*ChatNtf)(nil),     // 2: main.ChatNtf
 }
 var file_chat_proto_depIdxs = []int32{
 	0, // [0:0] is the sub-list for method output_type
@@ -165,7 +221,7 @@ func file_chat_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_chat_proto_rawDesc), len(file_chat_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

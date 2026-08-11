@@ -357,6 +357,7 @@ const BODY_SCHEMAS = {
   ErrorRes: { fields: [['Code', 1, 'int32'], ['Msg', 2, 'string']] },
   SendChatReq: { fields: [['UUid', 1, 'int64'], ['Msg', 2, 'string']] },
   SendChatRsp: { fields: [['UUid', 1, 'int64']] },
+  ChatNtf: { fields: [['UUid', 1, 'int64'], ['Msg', 2, 'string']] },
 };
 
 function encodeBody(typeName, obj) {
@@ -409,6 +410,7 @@ const CMDS = [
   { cmd: 4, name: 'CmdHeartRsp', req: null, rsp: 'HeartRes' },
   { cmd: 5, name: 'CmdSendChat', req: 'SendChatReq', rsp: 'SendChatRsp' },
   { cmd: 6, name: 'CmdSendChatRsp', req: null, rsp: 'SendChatRsp' },
+  { cmd: 100, name: 'CmdChatPush', req: null, rsp: 'ChatNtf' },
   { cmd: 0xffff, name: 'CmdError', req: null, rsp: 'ErrorRes' },
 ];
 const TYPE_NAMES = { 1: 'Req', 2: 'Rsp', 3: 'Push' };
