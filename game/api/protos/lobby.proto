@@ -1,0 +1,27 @@
+syntax = "proto3";
+package main;
+
+option go_package = "./pt";
+
+message LobbyInfoReq {
+}
+
+message LobbyInfoRes {
+  int32 Online = 1;
+  repeated LobbyPlayer Players = 2;
+}
+
+message LobbyPlayer {
+  int64  UID  = 1;
+  string Name = 2;
+}
+
+message LobbyJoinPush {
+  LobbyPlayer Player = 1;
+  int32       Online = 2;
+}
+
+message LobbyLeavePush {
+  LobbyPlayer Player = 1;
+  int32       Online = 2;
+}

@@ -12,11 +12,16 @@ const (
 
 	CmdSendChat
 	CmdSendChatRsp
+
+	CmdLobbyInfo
+	CmdLobbyInfoRsp // 8
 )
 
 // 推送命令号（MsgTypePush，服务端主动下发），与请求/响应命令号隔离。
 const (
 	CmdChatPush uint16 = iota + 10000
+	CmdLobbyJoinPush
+	CmdLobbyLeavePush
 )
 
 // CmdError 系统保留错误响应命令号：路由层统一出错时下发，

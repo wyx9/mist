@@ -15,3 +15,28 @@ type RoomPlayerJoin struct {
 type RoomPlayerLeave struct {
 	UID int64 // 玩家全局唯一 id
 }
+
+// RoomPlayerInfo 大厅玩家快照条目（Room -> controller，RPC 回复）。
+type RoomPlayerInfo struct {
+	UID  int64
+	Name string
+}
+
+// RoomGetPlayers 大厅在线玩家快照查询（Call/RPC，回复 []RoomPlayerInfo）。
+type RoomGetPlayers struct{}
+
+// LobbyBroadcastKind 大厅上下线广播类型。
+type LobbyBroadcastKind int
+
+const (
+	LobbyJoin LobbyBroadcastKind = iota + 1
+	LobbyLeave
+)
+
+// LobbyBroadcast 大厅上下线广播（Room -> 各玩家 actor，由玩家写回自己的连接）。
+type LobbyBroadcast struct {
+	Kind   LobbyBroadcastKind
+	UID    int64
+	Name   string
+	Online int
+}

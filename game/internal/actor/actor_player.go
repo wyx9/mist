@@ -4,10 +4,14 @@ import (
 	"errors"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
+	"simple_game/game/api/protos/pt"
 	"simple_game/game/internal/actor/core"
 	"simple_game/game/internal/actor/entity"
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/network"
+	"simple_game/game/pkg/protocol"
 )
 
 // Player 玩家业务 Actor，实现 core.IActor / core.Persistable / core.MessageHandler / core.IdleTimeoutProvider。
@@ -106,6 +110,8 @@ func (p *Player) HandleMessage(ctx *core.ActorContext, msg interface{}) {
 	case core.ConnDetached:
 		p.conn = nil
 		logger.INFO("player conn detached, actor sleeping, name:", p.name)
+		// 断线即从大厅在线列表移除；actor 保留等待重连复用
+		p.notifyRoomLeave()
 	case core.ConnAttached:
 		conn, ok := m.Conn.(network.NetConn)
 		if !ok {
@@ -115,6 +121,47 @@ func (p *Player) HandleMessage(ctx *core.ActorContext, msg interface{}) {
 		p.conn = conn
 		p.ip = conn.RemoteAddr()
 		logger.INFO("player conn attached, name:", p.name)
+	case entity.LobbyBroadcast:
+		p.pushLobbyBroadcast(m)
+	}
+}
+
+// pushLobbyBroadcast 将大厅上下线广播编码为 MsgTypePush 写回自己连接。
+// 断线重连宽限期内无连接时静默丢弃，避免唤醒休眠 actor 产生噪音日志。
+func (p *Player) pushLobbyBroadcast(m entity.LobbyBroadcast) {
+	if p.conn == nil {
+		return
+	}
+	var cmd uint16
+	var bodyMsg proto.Message
+	switch m.Kind {
+	case entity.LobbyJoin:
+		cmd = protocol.CmdLobbyJoinPush
+		bodyMsg = &pt.LobbyJoinPush{Player: &pt.LobbyPlayer{UID: m.UID, Name: m.Name}, Online: int32(m.Online)}
+	case entity.LobbyLeave:
+		cmd = protocol.CmdLobbyLeavePush
+		bodyMsg = &pt.LobbyLeavePush{Player: &pt.LobbyPlayer{UID: m.UID, Name: m.Name}, Online: int32(m.Online)}
+	default:
+		logger.WARNING("unknown lobby broadcast kind:", m.Kind, "player:", p.name)
+		return
+	}
+	body, err := proto.Marshal(bodyMsg)
+	if err != nil {
+		logger.ERROR("lobby push marshal failed:", err, "player:", p.name)
+		return
+	}
+	out, err := protocol.EncodeMsg(&protocol.Msg{
+		MsgType: protocol.MsgTypePush,
+		Cmd:     cmd,
+		UID:     m.UID,
+		Body:    body,
+	})
+	if err != nil {
+		logger.ERROR("lobby push encode failed:", err, "player:", p.name)
+		return
+	}
+	if err := p.WriteMessage(out); err != nil {
+		logger.ERROR("lobby push write failed:", err, "player:", p.name)
 	}
 }
 

@@ -45,8 +45,35 @@ func (r *Room) HandleMessage(ctx *core.ActorContext, msg interface{}) {
 	case entity.RoomPlayerJoin:
 		r.Players[m.UID] = m.Name
 		logger.INFO("room player joined, uid:", m.UID, "name:", m.Name, "total:", len(r.Players))
+		r.broadcast(ctx, entity.LobbyBroadcast{
+			Kind: entity.LobbyJoin, UID: m.UID, Name: m.Name, Online: len(r.Players),
+		})
 	case entity.RoomPlayerLeave:
+		name, ok := r.Players[m.UID]
+		if !ok {
+			logger.WARNING("room player leave unknown, uid:", m.UID)
+			return
+		}
 		delete(r.Players, m.UID)
 		logger.INFO("room player left, uid:", m.UID, "total:", len(r.Players))
+		r.broadcast(ctx, entity.LobbyBroadcast{
+			Kind: entity.LobbyLeave, UID: m.UID, Name: name, Online: len(r.Players),
+		})
+	case entity.RoomGetPlayers:
+		players := make([]entity.RoomPlayerInfo, 0, len(r.Players))
+		for uid, name := range r.Players {
+			players = append(players, entity.RoomPlayerInfo{UID: uid, Name: name})
+		}
+		ctx.Reply(players)
+	}
+}
+
+// broadcast 向当前所有玩家 actor 逐个投递大厅广播（对齐 skynet 广播模式：
+// 服务持有接收方列表并逐个发消息，全部走跨 actor 消息，不直接操作他人状态）。
+func (r *Room) broadcast(ctx *core.ActorContext, msg entity.LobbyBroadcast) {
+	for _, name := range r.Players {
+		if err := ctx.Send(name, msg); err != nil {
+			logger.ERROR("lobby broadcast send failed:", err, "to:", name)
+		}
 	}
 }
