@@ -171,9 +171,12 @@ func (l *gameLink) closeAllSessions() {
 }
 
 // closeClientSession 关闭一个客户端会话（幂等；仅在仍是最新会话时删除，避免顶替竞态）。
-func closeClientSession(s *Session) {
+// 返回该会话在被关闭时是否仍是当前会话：true 表示由它负责通知 game 拆除隧道。
+func closeClientSession(s *Session) bool {
+	current := false
 	if cur, ok := sessionMap.Load(s.TunnelID); ok && cur == s {
 		sessionMap.Delete(s.TunnelID)
+		current = true
 	}
 	if l, ok := gameLinks.Load(s.GameAddr); ok {
 		link := l.(*gameLink)
@@ -182,4 +185,5 @@ func closeClientSession(s *Session) {
 		}
 	}
 	_ = s.ClientConn.Close()
+	return current
 }

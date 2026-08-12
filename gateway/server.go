@@ -175,8 +175,11 @@ func handleClient(clientConn network.NetConn, rdb *redis.Client, secret []byte) 
 	logger.INFO("session up:", playerName, "game:", reg.GameAddr)
 	defer func() {
 		logger.INFO("session closed:", playerName)
-		closeClientSession(sess)
-		_ = link.sendKick(playerName)
+		// 只有确认自己仍是当前会话时才通知 game 拆隧道，
+		// 避免旧连接收尾的晚到 kick 误拆重连后新建的隧道
+		if closeClientSession(sess) {
+			_ = link.sendKick(playerName)
+		}
 	}()
 
 	// client -> game
