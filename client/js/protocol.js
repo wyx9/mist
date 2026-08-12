@@ -385,3 +385,17 @@ function decodeJwtPayload(token) {
     return null;
   }
 }
+
+// BigInt 安全 JSON 序列化：日志等场景输出 int64（uid）时不抛错，
+// BigInt 统一转为 "<值>n" 字符串，便于区分类型。
+function safeStringify(value) {
+  const seen = new WeakSet();
+  return JSON.stringify(value, function (key, val) {
+    if (typeof val === 'bigint') return val.toString() + 'n';
+    if (typeof val === 'object' && val !== null) {
+      if (seen.has(val)) return '[Circular]';
+      seen.add(val);
+    }
+    return val;
+  });
+}

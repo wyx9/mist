@@ -23,6 +23,7 @@ const ws = new WsClient({
   onReady: enterGameFlow,
   onPush: handlePush,
   onHeartbeat: renderHeartbeat,
+  onLog: onLogEntry,
   onClose: (code, willRetry, retries) => {
     if (state.view !== 'lobby') return;
     if (willRetry) {
@@ -38,6 +39,15 @@ const ws = new WsClient({
   onRetry: (n) => setPill('pillWs', 'WS 重连 ' + n + '/3', 'warn'),
   onFrameError: (e) => console.warn('[frame]', e.message),
 });
+
+const logState = {
+  open: false,
+  filters: { send: true, recv: true, sys: true, err: true },
+};
+
+function logSys(text) {
+  ws.addLog('sys', text);
+}
 
 function setPill(id, text, kind) {
   const el = $(id);
@@ -129,6 +139,7 @@ async function doLogin() {
 
 function enterLobbyView() {
   showView('lobby');
+  logSys('进入大厅，账号 ' + state.account);
   $('lobbyName').textContent = state.account;
   $('lobbyUid').textContent = state.uid.toString();
   setPill('pillWs', 'WS 连接中…', 'warn');
@@ -150,6 +161,7 @@ async function enterGameFlow() {
     }, { uid: state.uid, timeoutMs: 8000 });
     if (res.Code !== 0) throw new Error('游戏登录失败 Code=' + res.Code);
     setPill('pillLogin', '已登录', 'ok');
+    logSys('游戏登录成功');
     ws.startHeartbeat();
     await refreshLobby();
   } catch (e) {
@@ -219,8 +231,72 @@ function renderPlayers() {
   }
 }
 
+function openLogPanel() {
+  logState.open = true;
+  $('logPanel').classList.remove('hidden');
+  $('btnLog').textContent = '收起日志';
+  renderLogPanel();
+}
+
+function closeLogPanel() {
+  logState.open = false;
+  $('logPanel').classList.add('hidden');
+  $('btnLog').textContent = '消息日志';
+}
+
+function toggleLogPanel() {
+  if (logState.open) closeLogPanel();
+  else openLogPanel();
+}
+
+function clearLogPanel() {
+  ws.clearLog();
+  renderLogPanel();
+}
+
+function onLogEntry() {
+  if (!logState.open) return;
+  renderLogPanel();
+}
+
+function filteredLogs() {
+  return ws.log.filter((e) => logState.filters[e.kind]);
+}
+
+function logEntryEl(entry) {
+  const div = document.createElement('div');
+  div.className = 'log-entry ' + entry.kind;
+  const ts = document.createElement('span');
+  ts.className = 'ts';
+  const d = entry.ts instanceof Date ? entry.ts : new Date(entry.ts);
+  ts.textContent = d.toLocaleTimeString('zh-CN', { hour12: false }) +
+    '.' + String(d.getMilliseconds()).padStart(3, '0');
+  const text = document.createElement('span');
+  text.textContent = entry.text;
+  div.appendChild(ts);
+  div.appendChild(text);
+  return div;
+}
+
+function renderLogPanel() {
+  const list = $('logList');
+  list.innerHTML = '';
+  const entries = filteredLogs();
+  if (!entries.length) {
+    const div = document.createElement('div');
+    div.className = 'log-empty';
+    div.textContent = '暂无日志';
+    list.appendChild(div);
+    return;
+  }
+  for (const e of entries) list.appendChild(logEntryEl(e));
+  list.scrollTop = list.scrollHeight;
+}
+
 function logout() {
+  closeLogPanel();
   ws.close(true);
+  ws.clearLog();
   localStorage.removeItem(SESSION_KEY);
   state.players.clear();
   state.online = 0;
@@ -240,6 +316,7 @@ function restoreSession() {
   state.gateway = saved.gateway;
   state.uid = BigInt(saved.uid);
   enterLobbyView();
+  logSys('恢复会话，重新登录中');
   toast('恢复会话，重新登录中…');
   ws.connect(state.gateway, state.token, state.uid).catch((e) => toast(e.message));
 }
@@ -248,6 +325,15 @@ function init() {
   $('btnLogin').addEventListener('click', doLogin);
   $('accountInput').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') doLogin();
+  });
+  $('btnLog').addEventListener('click', toggleLogPanel);
+  $('btnLogClose').addEventListener('click', closeLogPanel);
+  $('btnLogClear').addEventListener('click', clearLogPanel);
+  document.querySelectorAll('#logPanel .log-filter input').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      logState.filters[cb.dataset.filter] = cb.checked;
+      renderLogPanel();
+    });
   });
   $('btnLogout').addEventListener('click', logout);
   restoreSession();

@@ -39,52 +39,73 @@
 
 <!-- 大厅视图 -->
 <section id="view-lobby" class="view hidden">
-  <div class="lobby-shell">
-    <header class="lobby-head">
-      <div class="head-left">
-        <img class="logo-sm" src="assets/logo.png" alt="logo">
-        <div>
-          <h2>咖啡大厅</h2>
-          <div class="player-info">
-            <span id="lobbyName">-</span> · UID <span id="lobbyUid">-</span>
+  <div class="lobby-wrap">
+    <div class="lobby-shell">
+      <header class="lobby-head">
+        <div class="head-left">
+          <img class="logo-sm" src="assets/logo.png" alt="logo">
+          <div>
+            <h2>咖啡大厅</h2>
+            <div class="player-info">
+              <span id="lobbyName">-</span> · UID <span id="lobbyUid">-</span>
+            </div>
           </div>
         </div>
-      </div>
-      <div class="conn-box">
-        <span id="pillWs" class="pill bad">WS 未连接</span>
-        <span id="pillHs" class="pill bad">未握手</span>
-        <span id="pillLogin" class="pill bad">未登录</span>
-        <span id="pillHb" class="pill bad">心跳 -</span>
-      </div>
-      <button id="btnLogout" class="pixel-btn small secondary" type="button">退出登录</button>
-    </header>
-
-    <main class="lobby-body">
-      <section class="panel chain-panel pixel-panel">
-        <h3>咖啡合成链</h3>
-        <div class="chain">
-          <div class="chain-item"><img src="assets/chain_bean.png" alt="咖啡果"><span>咖啡果</span></div>
-          <div class="chain-arrow">›</div>
-          <div class="chain-item"><img src="assets/chain_green.png" alt="生豆"><span>生豆</span></div>
-          <div class="chain-arrow">›</div>
-          <div class="chain-item"><img src="assets/chain_roast.png" alt="烘焙豆"><span>烘焙豆</span></div>
-          <div class="chain-arrow">›</div>
-          <div class="chain-item"><img src="assets/chain_espresso.png" alt="浓缩"><span>浓缩</span></div>
-          <div class="chain-arrow">›</div>
-          <div class="chain-item"><img src="assets/chain_latte.png" alt="拿铁"><span>拿铁</span></div>
+        <div class="conn-box">
+          <span id="pillWs" class="pill bad">WS 未连接</span>
+          <span id="pillHs" class="pill bad">未握手</span>
+          <span id="pillLogin" class="pill bad">未登录</span>
+          <span id="pillHb" class="pill bad">心跳 -</span>
         </div>
-        <p class="chain-note">合成消除玩法即将开放，敬请期待</p>
-        <button id="btnStart" class="pixel-btn primary" type="button" disabled>开始游戏（开发中）</button>
-      </section>
+        <button id="btnLog" class="pixel-btn small" type="button">消息日志</button>
+        <button id="btnLogout" class="pixel-btn small secondary" type="button">退出登录</button>
+      </header>
 
-      <section class="panel list-panel pixel-panel">
-        <div class="list-head">
-          <h3>在线玩家</h3>
-          <span class="online-count">在线 <b id="onlineCount">0</b> 人</span>
+      <main class="lobby-body">
+        <section class="panel chain-panel pixel-panel">
+          <h3>咖啡合成链</h3>
+          <div class="chain">
+            <div class="chain-item"><img src="assets/chain_bean.png" alt="咖啡果"><span>咖啡果</span></div>
+            <div class="chain-arrow">›</div>
+            <div class="chain-item"><img src="assets/chain_green.png" alt="生豆"><span>生豆</span></div>
+            <div class="chain-arrow">›</div>
+            <div class="chain-item"><img src="assets/chain_roast.png" alt="烘焙豆"><span>烘焙豆</span></div>
+            <div class="chain-arrow">›</div>
+            <div class="chain-item"><img src="assets/chain_espresso.png" alt="浓缩"><span>浓缩</span></div>
+            <div class="chain-arrow">›</div>
+            <div class="chain-item"><img src="assets/chain_latte.png" alt="拿铁"><span>拿铁</span></div>
+          </div>
+          <p class="chain-note">合成消除玩法即将开放，敬请期待</p>
+          <button id="btnStart" class="pixel-btn primary" type="button" disabled>开始游戏（开发中）</button>
+        </section>
+
+        <section class="panel list-panel pixel-panel">
+          <div class="list-head">
+            <h3>在线玩家</h3>
+            <span class="online-count">在线 <b id="onlineCount">0</b> 人</span>
+          </div>
+          <ul id="playerList" class="player-list"></ul>
+        </section>
+      </main>
+    </div>
+
+    <!-- 消息日志（固定右侧） -->
+    <div id="logPanel" class="log-panel pixel-panel hidden">
+      <div class="log-head">
+        <h3>消息日志</h3>
+        <div class="log-actions">
+          <button id="btnLogClear" class="pixel-btn small" type="button">清空</button>
+          <button id="btnLogClose" class="pixel-btn small secondary" type="button">关闭</button>
         </div>
-        <ul id="playerList" class="player-list"></ul>
-      </section>
-    </main>
+      </div>
+      <div class="log-filters">
+        <label class="log-filter"><input type="checkbox" data-filter="send" checked> 发送</label>
+        <label class="log-filter"><input type="checkbox" data-filter="recv" checked> 接收</label>
+        <label class="log-filter"><input type="checkbox" data-filter="sys" checked> 系统</label>
+        <label class="log-filter"><input type="checkbox" data-filter="err" checked> 错误</label>
+      </div>
+      <div id="logList" class="log-list"></div>
+    </div>
   </div>
 
   <div id="toast" class="toast hidden"></div>
