@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>咖啡合成 · Coffee Merge</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- 登录视图 -->
+<section id="view-login" class="view">
+  <div class="login-panel pixel-panel">
+    <img class="logo" src="assets/logo.png" alt="Coffee Merge logo">
+    <h1 class="game-title">咖啡合成</h1>
+    <p class="game-sub">COFFEE MERGE · 多人同屏合成消除</p>
+
+    <div class="field">
+      <label for="serverSel">游戏服务器</label>
+      <select id="serverSel">
+        <option value="127.0.0.1:9902">本地 WebAPI · 127.0.0.1:9902</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="accountInput">玩家账号（用户 ID）</label>
+      <input id="accountInput" type="text" maxlength="32" placeholder="例如 barista_01"
+             autocomplete="username" spellcheck="false">
+    </div>
+
+    <button id="btnLogin" class="pixel-btn primary" type="button">登 录</button>
+    <div id="loginError" class="msg error hidden"></div>
+    <div class="hint">开发环境：密码固定 123，首次登录自动建号</div>
+  </div>
+</section>
+
+<!-- 大厅视图 -->
+<section id="view-lobby" class="view hidden">
+  <div class="lobby-shell">
+    <header class="lobby-head">
+      <div class="head-left">
+        <img class="logo-sm" src="assets/logo.png" alt="logo">
+        <div>
+          <h2>咖啡大厅</h2>
+          <div class="player-info">
+            <span id="lobbyName">-</span> · UID <span id="lobbyUid">-</span>
+          </div>
+        </div>
+      </div>
+      <div class="conn-box">
+        <span id="pillWs" class="pill bad">WS 未连接</span>
+        <span id="pillHs" class="pill bad">未握手</span>
+        <span id="pillLogin" class="pill bad">未登录</span>
+        <span id="pillHb" class="pill bad">心跳 -</span>
+      </div>
+      <button id="btnLogout" class="pixel-btn small secondary" type="button">退出登录</button>
+    </header>
+
+    <main class="lobby-body">
+      <section class="panel chain-panel pixel-panel">
+        <h3>咖啡合成链</h3>
+        <div class="chain">
+          <div class="chain-item"><img src="assets/chain_bean.png" alt="咖啡果"><span>咖啡果</span></div>
+          <div class="chain-arrow">›</div>
+          <div class="chain-item"><img src="assets/chain_green.png" alt="生豆"><span>生豆</span></div>
+          <div class="chain-arrow">›</div>
+          <div class="chain-item"><img src="assets/chain_roast.png" alt="烘焙豆"><span>烘焙豆</span></div>
+          <div class="chain-arrow">›</div>
+          <div class="chain-item"><img src="assets/chain_espresso.png" alt="浓缩"><span>浓缩</span></div>
+          <div class="chain-arrow">›</div>
+          <div class="chain-item"><img src="assets/chain_latte.png" alt="拿铁"><span>拿铁</span></div>
+        </div>
+        <p class="chain-note">合成消除玩法即将开放，敬请期待</p>
+        <button id="btnStart" class="pixel-btn primary" type="button" disabled>开始游戏（开发中）</button>
+      </section>
+
+      <section class="panel list-panel pixel-panel">
+        <div class="list-head">
+          <h3>在线玩家</h3>
+          <span class="online-count">在线 <b id="onlineCount">0</b> 人</span>
+        </div>
+        <ul id="playerList" class="player-list"></ul>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+</section>
+
+<script src="js/protocol.js"></script>
+<script src="js/net.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
