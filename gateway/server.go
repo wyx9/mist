@@ -161,6 +161,12 @@ func handleClient(clientConn network.NetConn, rdb *redis.Client, secret []byte) 
 		_ = clientConn.Close()
 		return
 	}
+	// 握手成功回执（对齐客户端测试页约定的握手契约）
+	if err := clientConn.WriteMessage([]byte(`{"status":"ok"}`)); err != nil {
+		logger.ERROR("write handshake ok failed:", err, "player:", playerName)
+		_ = clientConn.Close()
+		return
+	}
 
 	// 7. 建立 session 并启动转发（game -> client 由 gameLink reader 按隧道回投）
 	sess := &Session{TunnelID: playerName, UID: uid, ClientConn: clientConn, GameAddr: reg.GameAddr}
