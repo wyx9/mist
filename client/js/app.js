@@ -153,6 +153,8 @@ async function enterGameFlow() {
   setPill('pillWs', 'WS 已连接', 'ok');
   setPill('pillHs', '已握手', 'ok');
   setPill('pillLogin', '登录中…', 'warn');
+  // 握手成功即启动心跳，不依赖登录成功：连接静默是掉线重连循环的根源
+  ws.startHeartbeat();
   try {
     const res = await ws.sendReq(1, 'LoginReq', {
       UUid: state.uid,
@@ -162,7 +164,6 @@ async function enterGameFlow() {
     if (res.Code !== 0) throw new Error('游戏登录失败 Code=' + res.Code);
     setPill('pillLogin', '已登录', 'ok');
     logSys('游戏登录成功');
-    ws.startHeartbeat();
     await refreshLobby();
   } catch (e) {
     setPill('pillLogin', '登录失败', 'bad');
