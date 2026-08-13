@@ -16,6 +16,7 @@ const state = {
   view: 'login',
   players: new Map(),
   online: 0,
+  messages: [],
 };
 
 const ws = new WsClient({
@@ -147,6 +148,8 @@ function enterLobbyView() {
   setPill('pillLogin', '登录中…', 'warn');
   setPill('pillHb', '心跳 -', 'bad');
   renderPlayers();
+  state.messages = [];
+  renderChat();
 }
 
 async function enterGameFlow() {
@@ -165,6 +168,7 @@ async function enterGameFlow() {
     setPill('pillLogin', '已登录', 'ok');
     logSys('游戏登录成功');
     await refreshLobby();
+    await loadChatHistory();
   } catch (e) {
     setPill('pillLogin', '登录失败', 'bad');
     toast(e.message);
@@ -185,6 +189,92 @@ async function refreshLobby() {
   }
 }
 
+async function loadChatHistory() {
+  try {
+    const res = await ws.sendReq(9, 'ChatHistoryReq', {}, { uid: state.uid, timeoutMs: 8000 });
+    state.messages = (res.Messages || []).map((m) => ({
+      uid: m.UUid,
+      name: m.Name || '',
+      msg: m.Msg || '',
+      time: m.Time || 0,
+    }));
+    renderChat();
+  } catch (e) {
+    toast('加载聊天记录失败: ' + e.message);
+  }
+}
+
+function sendChat() {
+  const input = $('chatInput');
+  const msg = input.value.trim();
+  if (!msg) return;
+
+  $('btnSendChat').disabled = true;
+  ws.sendReq(5, 'SendChatReq', { UUid: state.uid, Msg: msg }, { uid: state.uid, timeoutMs: 8000 })
+    .then(() => {
+      input.value = '';
+    })
+    .catch((e) => {
+      toast('发送聊天失败: ' + e.message);
+    })
+    .finally(() => {
+      $('btnSendChat').disabled = false;
+      input.focus();
+    });
+}
+
+function appendChatMessage(message) {
+  state.messages.push({
+    uid: message.UUid,
+    name: message.Name || '',
+    msg: message.Msg || '',
+    time: message.Time || 0,
+  });
+  if (state.messages.length > 100) {
+    state.messages.splice(0, state.messages.length - 100);
+  }
+  renderChat();
+}
+
+function renderChat() {
+  const list = $('chatList');
+  list.innerHTML = '';
+
+  if (!state.messages.length) {
+    const div = document.createElement('div');
+    div.className = 'chat-empty';
+    div.textContent = '暂无聊天消息';
+    list.appendChild(div);
+    return;
+  }
+
+  for (const message of state.messages) {
+    const item = document.createElement('div');
+    item.className = 'chat-message' + (String(message.uid) === String(state.uid) ? ' self' : '');
+
+    const name = document.createElement('span');
+    name.className = 'chat-name';
+    name.textContent = message.name || ('UID ' + String(message.uid));
+
+    const time = document.createElement('span');
+    time.className = 'chat-time';
+    const d = new Date(Number(message.time));
+    time.textContent = Number.isFinite(d.getTime())
+      ? d.toLocaleTimeString('zh-CN', { hour12: false })
+      : '';
+
+    const text = document.createElement('span');
+    text.className = 'chat-text';
+    text.textContent = message.msg;
+
+    item.appendChild(name);
+    item.appendChild(time);
+    item.appendChild(text);
+    list.appendChild(item);
+  }
+  list.scrollTop = list.scrollHeight;
+}
+
 function handlePush(cmd, body) {
   if (cmd === 10001) { // LobbyJoinPush
     if (body.Player && String(body.Player.UID) !== String(state.uid)) {
@@ -196,6 +286,8 @@ function handlePush(cmd, body) {
     if (body.Player) state.players.delete(String(body.Player.UID));
     if (body.Online !== undefined && body.Online !== null) state.online = body.Online;
     renderPlayers();
+  } else if (cmd === 10000) { // ChatPush
+    appendChatMessage(body);
   }
 }
 
@@ -301,6 +393,7 @@ function logout() {
   localStorage.removeItem(SESSION_KEY);
   state.players.clear();
   state.online = 0;
+  state.messages = [];
   showView('login');
   setPill('pillWs', 'WS 未连接', 'bad');
   setPill('pillHs', '未握手', 'bad');
@@ -335,6 +428,10 @@ function init() {
       logState.filters[cb.dataset.filter] = cb.checked;
       renderLogPanel();
     });
+  });
+  $('btnSendChat').addEventListener('click', sendChat);
+  $('chatInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') sendChat();
   });
   $('btnLogout').addEventListener('click', logout);
   restoreSession();

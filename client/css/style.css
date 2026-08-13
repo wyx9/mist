@@ -231,6 +231,102 @@ select { cursor: pointer; }
 .player-list li .me { margin-left: auto; color: var(--green); font-size: 11px; }
 .player-list .empty { justify-content: center; color: var(--dim); border-style: dashed; }
 
+.chat-panel { display: flex; flex-direction: column; gap: 12px; }
+.chat-head h3 { font-size: 12px; color: var(--amber); letter-spacing: 1px; }
+.chat-list {
+  height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #160d07;
+  border: 4px solid var(--ink);
+  padding: 10px;
+}
+.chat-empty {
+  color: var(--dim);
+  text-align: center;
+  padding: 24px 0;
+  font-family: var(--zh);
+  font-size: 12px;
+}
+.chat-message {
+  font-family: var(--zh);
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 7px 8px;
+  background: var(--panel2);
+  border: 3px solid var(--ink);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: baseline;
+}
+.chat-message.self { background: #3b2a1a; border-color: var(--amber); }
+.chat-name { color: var(--green); font-weight: bold; }
+.chat-message.self .chat-name { color: var(--amber); }
+.chat-time { color: var(--dim); font-size: 11px; margin-left: auto; }
+.chat-text { flex-basis: 100%; color: var(--text); word-break: break-word; white-space: pre-wrap; }
+.chat-input-row { display: flex; gap: 8px; }
+.chat-input-row input { flex: 1; }
+
+#view-game { padding: 20px; }
+.game-shell {
+  width: 100%;
+  max-width: 620px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  align-items: stretch;
+}
+.game-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.game-score {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--zh);
+  font-size: 14px;
+  color: var(--dim);
+}
+.game-score b {
+  color: var(--amber);
+  font-size: 20px;
+}
+.merge-board {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  background: #160d07;
+  border: 4px solid var(--ink);
+  padding: 10px;
+}
+.merge-cell {
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  background: var(--panel2);
+  border: 3px solid var(--ink);
+  cursor: pointer;
+}
+.merge-cell:hover { filter: brightness(1.12); }
+.merge-cell img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+.merge-cell.empty { border-style: dashed; opacity: .68; }
+.merge-cell.selected { border-color: var(--amber); box-shadow: 0 0 0 3px rgba(201, 141, 63, .55); }
+.game-hint {
+  font-family: var(--zh);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dim);
+  text-align: center;
+}
+
 /* ── 消息日志（固定右侧） ── */
 #logPanel {
   width: 340px;
@@ -348,6 +444,9 @@ select { cursor: pointer; }
   .pill { flex: 1; text-align: center; }
   .chain-item img { width: 44px; height: 44px; }
   .player-list { max-height: 40vh; }
+  .chat-list { height: 40vh; }
+  .game-head { flex-wrap: wrap; }
+  .game-score { margin-left: auto; }
   .log-panel { padding: 14px; }
   .log-actions .pixel-btn { flex: 1; }
   .log-filter { font-size: 13px; }
