@@ -15,6 +15,9 @@ const (
 
 	CmdLobbyInfo
 	CmdLobbyInfoRsp // 8
+
+	CmdChatHistory
+	CmdChatHistoryRsp // 10
 )
 
 // 推送命令号（MsgTypePush，服务端主动下发），与请求/响应命令号隔离。
@@ -40,9 +43,10 @@ const (
 // ReqRsp 请求→响应命令号绑定表（只读，勿修改）。
 // 不符合“响应 = 请求 + 1”默认规则的协议在此显式登记。
 var ReqRsp = map[uint16]uint16{
-	CmdLogin:    CmdLoginRsp,
-	CmdHeart:    CmdHeartRsp,
-	CmdSendChat: CmdSendChatRsp,
+	CmdLogin:       CmdLoginRsp,
+	CmdHeart:       CmdHeartRsp,
+	CmdSendChat:    CmdSendChatRsp,
+	CmdChatHistory: CmdChatHistoryRsp,
 }
 
 // RspCmd 返回请求对应的响应命令号；未绑定时默认 = 请求命令号 + 1。

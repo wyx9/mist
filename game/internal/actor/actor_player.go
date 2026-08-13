@@ -141,6 +141,9 @@ func (p *Player) pushLobbyBroadcast(m entity.LobbyBroadcast) {
 	case entity.LobbyLeave:
 		cmd = protocol.CmdLobbyLeavePush
 		bodyMsg = &pt.LobbyLeavePush{Player: &pt.LobbyPlayer{UID: m.UID, Name: m.Name}, Online: int32(m.Online)}
+	case entity.LobbyChat:
+		cmd = protocol.CmdChatPush
+		bodyMsg = &pt.ChatNtf{UUid: m.UID, Msg: m.Msg, Name: m.Name, Time: m.Time}
 	default:
 		logger.WARNING("unknown lobby broadcast kind:", m.Kind, "player:", p.name)
 		return

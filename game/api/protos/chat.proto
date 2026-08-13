@@ -17,4 +17,13 @@ message SendChatRsp {
 message ChatNtf {
   int64  UUid =1;
   string  Msg =2;
+  string  Name =3;
+  int64   Time =4;
+}
+
+message ChatHistoryReq {
+}
+
+message ChatHistoryRes {
+  repeated ChatNtf Messages = 1;
 }

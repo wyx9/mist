@@ -16,4 +16,5 @@ func RegisterAll() {
 
 	route.Register[*actor.Player, *pt.SendChatReq](protocol.CmdSendChat, ChatController)
 	route.Register[*actor.Player, *pt.LobbyInfoReq](protocol.CmdLobbyInfo, LobbyController)
+	route.Register[*actor.Player, *pt.ChatHistoryReq](protocol.CmdChatHistory, ChatHistoryController)
 }

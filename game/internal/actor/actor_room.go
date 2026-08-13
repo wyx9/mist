@@ -59,6 +59,14 @@ func (r *Room) HandleMessage(ctx *core.ActorContext, msg interface{}) {
 		r.broadcast(ctx, entity.LobbyBroadcast{
 			Kind: entity.LobbyLeave, UID: m.UID, Name: name, Online: len(r.Players),
 		})
+	case entity.LobbyChatMessage:
+		r.broadcast(ctx, entity.LobbyBroadcast{
+			Kind: entity.LobbyChat,
+			UID:  m.UID,
+			Name: m.Name,
+			Msg:  m.Msg,
+			Time: m.Time,
+		})
 	case entity.RoomGetPlayers:
 		players := make([]entity.RoomPlayerInfo, 0, len(r.Players))
 		for uid, name := range r.Players {
