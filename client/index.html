@@ -123,8 +123,25 @@
   <div id="toast" class="toast hidden"></div>
 </section>
 
+<!-- 单人合成游戏 -->
+<section id="view-game" class="view hidden">
+  <div class="game-shell pixel-panel">
+    <header class="game-head">
+      <button id="btnBackLobby" class="pixel-btn small secondary" type="button">返回大厅</button>
+      <div class="game-score">
+        <span>得分</span>
+        <b id="mergeScore">0</b>
+      </div>
+      <button id="btnRestart" class="pixel-btn small" type="button">重新开始</button>
+    </header>
+    <div id="mergeBoard" class="merge-board" aria-label="合成棋盘"></div>
+    <p class="game-hint">点击空位生成新元素；再点击两个同等级元素合成下一级。拿铁+拿铁会消除并得分。</p>
+  </div>
+</section>
+
 <script src="js/protocol.js"></script>
 <script src="js/net.js"></script>
 <script src="js/app.js"></script>
+<script src="js/game.js"></script>
 </body>
 </html>

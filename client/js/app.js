@@ -69,6 +69,7 @@ function showView(name) {
   state.view = name;
   $('view-login').classList.toggle('hidden', name !== 'login');
   $('view-lobby').classList.toggle('hidden', name !== 'lobby');
+  $('view-game').classList.toggle('hidden', name !== 'game');
 }
 
 function showLoginError(msg) {
