@@ -43,7 +43,7 @@ const ws = new WsClient({
 
 const logState = {
   open: false,
-  filters: { send: true, recv: true, sys: true, err: true },
+  filters: { send: true, recv: true, sys: true, err: true, heartbeat: true },
 };
 
 function logSys(text) {
@@ -353,7 +353,11 @@ function onLogEntry() {
 }
 
 function filteredLogs() {
-  return ws.log.filter((e) => logState.filters[e.kind]);
+  return ws.log.filter((e) => {
+    if (!logState.filters[e.kind]) return false;
+    if (e.heartbeat && !logState.filters.heartbeat) return false;
+    return true;
+  });
 }
 
 function logEntryEl(entry) {

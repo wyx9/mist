@@ -228,8 +228,11 @@ class WsClient {
     this.emitStatus();
   }
 
-  addLog(kind, text) {
-    const entry = { ts: new Date(), kind, text };
+  addLog(kind, text, extra) {
+    const heartbeat = extra && extra.heartbeat !== undefined
+      ? !!extra.heartbeat
+      : (text.indexOf('CmdHeart(') !== -1 || text.indexOf('CmdHeartRsp(') !== -1);
+    const entry = Object.assign({ ts: new Date(), kind, text }, { heartbeat });
     this.log.push(entry);
     if (this.log.length > this.logLimit) this.log.splice(0, this.log.length - this.logLimit);
     if (this.opts.onLog) this.opts.onLog(entry);
@@ -241,7 +244,6 @@ class WsClient {
 
   // 发送日志：心跳（CmdHeart=3）不记录
   logSend(cmd, msgID, bodyType, bodyObj) {
-    if (cmd === 3) return;
     const name = CMDS[cmd] ? CMDS[cmd].name : 'Cmd_' + cmd;
     const bodyText = bodyObj !== undefined && bodyObj !== null ? safeStringify(bodyObj) : '';
     this.addLog('send', '↑ ' + name + '(' + cmd + ') msgID=' + msgID + (bodyText ? ' body=' + bodyText : ''));
@@ -249,7 +251,6 @@ class WsClient {
 
   // 接收日志：心跳响应（CmdHeartRsp=4）不记录
   logRecv(m) {
-    if (m.cmd === 4) return;
     const name = CMDS[m.cmd] ? CMDS[m.cmd].name : 'Cmd_' + m.cmd;
     const body = decodeBodyFor(m.cmd, m.msgType, m.body);
     const bodyText = body !== null ? safeStringify(body) : (m.body.length ? '（未登记）' : '');
