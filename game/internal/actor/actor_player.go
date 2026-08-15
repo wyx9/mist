@@ -4,14 +4,11 @@ import (
 	"errors"
 	"time"
 
-	"google.golang.org/protobuf/proto"
-
 	"simple_game/game/api/protos/pt"
 	"simple_game/game/internal/actor/core"
 	"simple_game/game/internal/actor/entity"
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/network"
-	"simple_game/game/pkg/protocol"
 )
 
 // Player 玩家业务 Actor，实现 core.IActor / core.Persistable / core.MessageHandler / core.IdleTimeoutProvider。
@@ -67,6 +64,9 @@ func (p *Player) Stop() {
 // IdleTimeout 实现 core.IdleTimeoutProvider：断线重连宽限/休眠超时 10 分钟。
 func (p *Player) IdleTimeout() time.Duration { return 10 * time.Minute }
 
+// Routable 实现 core.Routable：玩家 actor 全局可路由（登录名全局唯一）。
+func (p *Player) Routable() bool { return true }
+
 // ActorID 实现 core.Persistable：返回玩家全局唯一 uid。
 func (p *Player) ActorID() int64 { return p.uid }
 
@@ -121,50 +121,6 @@ func (p *Player) HandleMessage(ctx *core.ActorContext, msg interface{}) {
 		p.conn = conn
 		p.ip = conn.RemoteAddr()
 		logger.INFO("player conn attached, name:", p.name)
-	case entity.LobbyBroadcast:
-		p.pushLobbyBroadcast(m)
-	}
-}
-
-// pushLobbyBroadcast 将大厅上下线广播编码为 MsgTypePush 写回自己连接。
-// 断线重连宽限期内无连接时静默丢弃，避免唤醒休眠 actor 产生噪音日志。
-func (p *Player) pushLobbyBroadcast(m entity.LobbyBroadcast) {
-	if p.conn == nil {
-		return
-	}
-	var cmd uint16
-	var bodyMsg proto.Message
-	switch m.Kind {
-	case entity.LobbyJoin:
-		cmd = protocol.CmdLobbyJoinPush
-		bodyMsg = &pt.LobbyJoinPush{Player: &pt.LobbyPlayer{UID: m.UID, Name: m.Name}, Online: int32(m.Online)}
-	case entity.LobbyLeave:
-		cmd = protocol.CmdLobbyLeavePush
-		bodyMsg = &pt.LobbyLeavePush{Player: &pt.LobbyPlayer{UID: m.UID, Name: m.Name}, Online: int32(m.Online)}
-	case entity.LobbyChat:
-		cmd = protocol.CmdChatPush
-		bodyMsg = &pt.ChatNtf{UUid: m.UID, Msg: m.Msg, Name: m.Name, Time: m.Time}
-	default:
-		logger.WARNING("unknown lobby broadcast kind:", m.Kind, "player:", p.name)
-		return
-	}
-	body, err := proto.Marshal(bodyMsg)
-	if err != nil {
-		logger.ERROR("lobby push marshal failed:", err, "player:", p.name)
-		return
-	}
-	out, err := protocol.EncodeMsg(&protocol.Msg{
-		MsgType: protocol.MsgTypePush,
-		Cmd:     cmd,
-		UID:     m.UID,
-		Body:    body,
-	})
-	if err != nil {
-		logger.ERROR("lobby push encode failed:", err, "player:", p.name)
-		return
-	}
-	if err := p.WriteMessage(out); err != nil {
-		logger.ERROR("lobby push write failed:", err, "player:", p.name)
 	}
 }
 
@@ -214,10 +170,13 @@ func (p *Player) notifyRoomLeave() {
 	if p.mgr == nil {
 		return
 	}
-	if err := p.mgr.Send(RoomActorName, p.name, entity.RoomPlayerLeave{UID: p.uid}); err != nil {
+	if err := p.mgr.Send(RoomActorName, p.name, &pt.RoomPlayerLeave{UID: p.uid}); err != nil {
 		logger.ERROR("notify room leave failed:", err, "name:", p.name)
 	}
 }
+
+// Connected 返回玩家当前是否持有连接（断线休眠期返回 false）。
+func (p *Player) Connected() bool { return p.conn != nil }
 
 // WriteMessage 实现 core.clientMsgWriter：向该玩家的客户端连接回包；休眠无连接时显式报错。
 func (p *Player) WriteMessage(data []byte) error {

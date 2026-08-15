@@ -39,6 +39,19 @@ type SetTimerHandle interface {
 	SetTimerHandle(h TimerHandle)
 }
 
+// Routable 标记接口：实现 Routable() bool 且返回 true 的 actor 全局可路由，
+// 创建/关闭时向位置表注册/注销。Player 实现（登录名全局唯一）；
+// Room 每节点常驻、始终本地，不实现。
+type Routable interface {
+	Routable() bool
+}
+
+// LocationRegistry 位置注册能力：由 gameserver 注入（写入/删除 Redis actor:loc）。
+type LocationRegistry interface {
+	Register(name string) error
+	Unregister(name string) error
+}
+
 // 定义错误常量
 var (
 	ErrActorNotFound = errors.New("actor not found")       // Actor 不存在

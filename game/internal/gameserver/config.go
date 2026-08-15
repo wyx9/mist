@@ -34,6 +34,13 @@ type GameConfig struct {
 	} `yaml:"Redis"`
 }
 
+// StartOptions Start 的启动参数。字段留空时行为与原有逻辑完全一致（自动探测配置、无覆盖）。
+type StartOptions struct {
+	ConfigPath   string // 配置文件路径；空则自动探测（findConfigPath）
+	ListenPort   string // 覆盖 Listen.Port；空则不覆盖
+	RegisterAddr string // 覆盖 RegisterAddr；空则不覆盖
+}
+
 func LoadGameConfig(path string) (*GameConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

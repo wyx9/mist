@@ -12,7 +12,6 @@ import (
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/mysql"
 	"simple_game/game/pkg/redis"
-	"simple_game/game/rpc"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -24,6 +23,7 @@ import (
 	"simple_game/game/internal/controller"
 	"simple_game/game/internal/dispatch"
 	"simple_game/game/internal/persist"
+	"simple_game/game/internal/rpc"
 	"simple_game/game/pkg/network"
 	"simple_game/game/pkg/registry"
 	"simple_game/game/pkg/timer"
@@ -58,6 +58,9 @@ type Server struct {
 	// 消息路由层
 	workerPool *dispatch.WorkerPool
 
+	// 内部 RPC 客户端（跨进程透明路由）
+	rpcClient *rpc.Client
+
 	// 生命周期
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -86,14 +89,23 @@ func NewServer() *Server {
 // Instance 返回全局 Server 单例。未初始化时返回 nil。
 func Instance() *Server { return instance }
 
-var cfgPath = findConfigPath("game")
-
 // Start 启动 Game 服务。按依赖顺序初始化所有组件。
-func (s *Server) Start() error {
+// opts 字段留空时行为与原有逻辑完全一致（自动探测配置、无覆盖）。
+func (s *Server) Start(opts StartOptions) error {
 	// Phase 1: 配置 + 日志
+	cfgPath := opts.ConfigPath
+	if cfgPath == "" {
+		cfgPath = findConfigPath("game")
+	}
 	cfg, err := LoadGameConfig(cfgPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+	if opts.ListenPort != "" {
+		cfg.Listen.Port = opts.ListenPort
+	}
+	if opts.RegisterAddr != "" {
+		cfg.RegisterAddr = opts.RegisterAddr
 	}
 	s.cfg = cfg
 
@@ -135,20 +147,24 @@ func (s *Server) Start() error {
 	// Phase 4: 对外服务 (goroutine)
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 
-	// 全局定时器轮询协程：每秒从 Redis 取到期任务投递给目标 actor
-	s.wg.Add(1)
-	go s.runGlobalTimer()
-
-	go rpc.StartGRPC()
-
 	addr := fmt.Sprintf("%s:%s", cfg.Listen.Addr, cfg.Listen.Port)
-	go s.serve(addr)
-
-	// 注册 game 地址到 Redis 并启动心跳
 	s.regAddr = cfg.RegisterAddr
 	if s.regAddr == "" {
 		s.regAddr = addr
 	}
+
+	// 内部 RPC 客户端：注入 actor 管理器（远程路由 + 位置注册）
+	s.rpcClient = rpc.NewClient(s.regAddr)
+	s.ActorManner.SetRemoteRouter(s.rpcClient)
+	s.ActorManner.SetLocationRegistry(&actorLocRegistry{srv: s})
+
+	// 全局定时器轮询协程：每秒从 Redis 取到期任务投递给目标 actor
+	s.wg.Add(1)
+	go s.runGlobalTimer()
+
+	go s.serve(addr)
+
+	// 注册 game 地址到 Redis 并启动心跳
 	if err := registry.Register(context.Background(), redis.RedisClient, s.regAddr); err != nil {
 		logger.ERROR("game registry register failed:", err)
 	}

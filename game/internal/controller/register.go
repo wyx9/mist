@@ -11,10 +11,16 @@ import (
 // A 为处理该协议的 actor 具体类型，注册到 controller 层以避免
 // controller → actor → route → controller 的 import 环。
 func RegisterAll() {
+	// 注册rpc
+	RegisterRpc()
+
+	// 客户端协议路由（cmd -> handler）
 	route.Register[*actor.Player, *pt.LoginReq](protocol.CmdLogin, LoginController)
 	route.Register[*actor.Player, *pt.HeartReq](protocol.CmdHeart, TestController)
 
 	route.Register[*actor.Player, *pt.SendChatReq](protocol.CmdSendChat, ChatController)
 	route.Register[*actor.Player, *pt.LobbyInfoReq](protocol.CmdLobbyInfo, LobbyController)
 	route.Register[*actor.Player, *pt.ChatHistoryReq](protocol.CmdChatHistory, ChatHistoryController)
+	route.Register[*actor.Player, *pt.PlayerInfoReq](protocol.CmdPlayerInfo, PlayerInfoController)
+
 }

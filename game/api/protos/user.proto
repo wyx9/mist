@@ -23,3 +23,16 @@ message HeartReq {
 message HeartRes {
     int64 Time =1;
 }
+
+// PlayerInfoReq 查询指定玩家信息（A 查 B 的跨节点 RPC）。
+message PlayerInfoReq {
+    string Name = 1; // 目标玩家名
+}
+
+// PlayerInfoRes 玩家信息快照。
+message PlayerInfoRes {
+    int64  UUid        = 1;
+    string Name        = 2;
+    bool   Online      = 3;
+    int64  LastLoginAt = 4;
+}

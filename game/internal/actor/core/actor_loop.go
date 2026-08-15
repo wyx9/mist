@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"simple_game/game/internal/rpc"
 	"simple_game/game/pkg/logger"
 )
 
@@ -81,7 +82,8 @@ func (ac *ActorBase) handleEnvelope(env *Envelope) {
 
 // dispatch 按消息类型分发：
 //   - MsgClient：走 StartActor 注入的 clientHandler（默认 HandleClientMsg）；
-//   - MsgSend / MsgCall：走可选的 MessageHandler 接口，未实现时异步消息丢弃、RPC 兜底回 nil。
+//   - MsgSend / MsgCall：优先走内部消息注册表（rpc.Dispatch，业务消息在 controller 层注册），
+//     未注册时回退到 actor 的 MessageHandler（框架生命周期消息 PersistTick/ConnDetached 等）。
 func (ac *ActorBase) dispatch(env *Envelope, ctx *ActorContext) {
 	switch env.Kind {
 	case MsgClient:
@@ -91,12 +93,28 @@ func (ac *ActorBase) dispatch(env *Envelope, ctx *ActorContext) {
 			logger.WARNING("actor has no client handler, drop message:", ac.name)
 		}
 	case MsgSend:
+		handled, _, herr := rpc.Dispatch(ac.iActor, ctx, env.From, env.Payload)
+		if handled {
+			if herr != nil {
+				logger.ERROR("internal handler error:", herr, "actor:", ac.name)
+			}
+			return
+		}
 		if h, ok := ac.iActor.(MessageHandler); ok {
 			h.HandleMessage(ctx, env.Payload)
 		} else {
 			logger.WARNING("actor does not handle internal messages, drop:", ac.name)
 		}
 	case MsgCall:
+		handled, result, herr := rpc.Dispatch(ac.iActor, ctx, env.From, env.Payload)
+		if handled {
+			if herr != nil {
+				ctx.Reply(&CallError{Err: herr.Error()})
+			} else {
+				ctx.Reply(result)
+			}
+			return
+		}
 		if h, ok := ac.iActor.(MessageHandler); ok {
 			h.HandleMessage(ctx, env.Payload)
 		}

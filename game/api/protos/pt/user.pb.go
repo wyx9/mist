@@ -213,6 +213,120 @@ func (x *HeartRes) GetTime() int64 {
 	return 0
 }
 
+// PlayerInfoReq 查询指定玩家信息（A 查 B 的跨节点 RPC）。
+type PlayerInfoReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=Name,proto3" json:"Name,omitempty"` // 目标玩家名
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PlayerInfoReq) Reset() {
+	*x = PlayerInfoReq{}
+	mi := &file_user_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PlayerInfoReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PlayerInfoReq) ProtoMessage() {}
+
+func (x *PlayerInfoReq) ProtoReflect() protoreflect.Message {
+	mi := &file_user_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PlayerInfoReq.ProtoReflect.Descriptor instead.
+func (*PlayerInfoReq) Descriptor() ([]byte, []int) {
+	return file_user_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *PlayerInfoReq) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+// PlayerInfoRes 玩家信息快照。
+type PlayerInfoRes struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UUid          int64                  `protobuf:"varint,1,opt,name=UUid,proto3" json:"UUid,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=Name,proto3" json:"Name,omitempty"`
+	Online        bool                   `protobuf:"varint,3,opt,name=Online,proto3" json:"Online,omitempty"`
+	LastLoginAt   int64                  `protobuf:"varint,4,opt,name=LastLoginAt,proto3" json:"LastLoginAt,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PlayerInfoRes) Reset() {
+	*x = PlayerInfoRes{}
+	mi := &file_user_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PlayerInfoRes) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PlayerInfoRes) ProtoMessage() {}
+
+func (x *PlayerInfoRes) ProtoReflect() protoreflect.Message {
+	mi := &file_user_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PlayerInfoRes.ProtoReflect.Descriptor instead.
+func (*PlayerInfoRes) Descriptor() ([]byte, []int) {
+	return file_user_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *PlayerInfoRes) GetUUid() int64 {
+	if x != nil {
+		return x.UUid
+	}
+	return 0
+}
+
+func (x *PlayerInfoRes) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *PlayerInfoRes) GetOnline() bool {
+	if x != nil {
+		return x.Online
+	}
+	return false
+}
+
+func (x *PlayerInfoRes) GetLastLoginAt() int64 {
+	if x != nil {
+		return x.LastLoginAt
+	}
+	return 0
+}
+
 var File_user_proto protoreflect.FileDescriptor
 
 const file_user_proto_rawDesc = "" +
@@ -229,7 +343,14 @@ const file_user_proto_rawDesc = "" +
 	"\n" +
 	"\bHeartReq\"\x1e\n" +
 	"\bHeartRes\x12\x12\n" +
-	"\x04Time\x18\x01 \x01(\x03R\x04TimeB\x06Z\x04./ptb\x06proto3"
+	"\x04Time\x18\x01 \x01(\x03R\x04Time\"#\n" +
+	"\rPlayerInfoReq\x12\x12\n" +
+	"\x04Name\x18\x01 \x01(\tR\x04Name\"q\n" +
+	"\rPlayerInfoRes\x12\x12\n" +
+	"\x04UUid\x18\x01 \x01(\x03R\x04UUid\x12\x12\n" +
+	"\x04Name\x18\x02 \x01(\tR\x04Name\x12\x16\n" +
+	"\x06Online\x18\x03 \x01(\bR\x06Online\x12 \n" +
+	"\vLastLoginAt\x18\x04 \x01(\x03R\vLastLoginAtB\x06Z\x04./ptb\x06proto3"
 
 var (
 	file_user_proto_rawDescOnce sync.Once
@@ -243,12 +364,14 @@ func file_user_proto_rawDescGZIP() []byte {
 	return file_user_proto_rawDescData
 }
 
-var file_user_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_user_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_user_proto_goTypes = []any{
-	(*LoginReq)(nil), // 0: main.LoginReq
-	(*LoginRes)(nil), // 1: main.LoginRes
-	(*HeartReq)(nil), // 2: main.HeartReq
-	(*HeartRes)(nil), // 3: main.HeartRes
+	(*LoginReq)(nil),      // 0: main.LoginReq
+	(*LoginRes)(nil),      // 1: main.LoginRes
+	(*HeartReq)(nil),      // 2: main.HeartReq
+	(*HeartRes)(nil),      // 3: main.HeartRes
+	(*PlayerInfoReq)(nil), // 4: main.PlayerInfoReq
+	(*PlayerInfoRes)(nil), // 5: main.PlayerInfoRes
 }
 var file_user_proto_depIdxs = []int32{
 	0, // [0:0] is the sub-list for method output_type
@@ -269,7 +392,7 @@ func file_user_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_user_proto_rawDesc), len(file_user_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -5,7 +5,6 @@ import (
 
 	"simple_game/game/api/protos/pt"
 	"simple_game/game/internal/actor"
-	"simple_game/game/internal/actor/entity"
 	"simple_game/game/internal/model"
 	"simple_game/game/internal/route"
 	"simple_game/game/pkg/logger"
@@ -17,7 +16,7 @@ func ChatController(ctx *route.HandlerContext[*actor.Player], req *pt.SendChatRe
 		return nil, err
 	}
 
-	if err := ctx.Comm.Send(actor.RoomActorName, entity.LobbyChatMessage{
+	if err := ctx.Comm.Send(actor.RoomActorName, &pt.LobbyChatMessage{
 		UID:  record.UID,
 		Name: record.Name,
 		Msg:  record.Msg,

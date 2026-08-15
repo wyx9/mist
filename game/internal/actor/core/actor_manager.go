@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"simple_game/game/internal/rpc"
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/protocol"
 	"simple_game/game/pkg/timer"
@@ -25,6 +26,8 @@ type AManager struct {
 	mu           sync.RWMutex
 	sched        *timer.Scheduler  // actor 内部内存定时调度器（惰性创建）
 	faultHandler func(name string) // actor 故障回调（handler 超时等），由 gameserver 设置
+	remoteRouter rpc.RemoteRouter   // 跨进程路由（本地未命中时委托），由 gameserver 注入
+	locationReg  LocationRegistry  // 可路由 actor 位置注册，由 gameserver 注入
 	sweeperCtx   context.Context
 	sweeperStop  context.CancelFunc
 	sweeperRun   bool
@@ -45,6 +48,27 @@ func (am *AManager) notifyFault(name string) {
 	if fn != nil {
 		fn(name)
 	}
+}
+
+// SetRemoteRouter 注册跨进程路由（本地未命中时委托给 gateway 转发）。
+func (am *AManager) SetRemoteRouter(r rpc.RemoteRouter) {
+	am.mu.Lock()
+	defer am.mu.Unlock()
+	am.remoteRouter = r
+}
+
+// remoteRouterSnapshot 读取跨进程路由引用快照。
+func (am *AManager) remoteRouterSnapshot() rpc.RemoteRouter {
+	am.mu.RLock()
+	defer am.mu.RUnlock()
+	return am.remoteRouter
+}
+
+// SetLocationRegistry 注册可路由 actor 的位置注册实现。
+func (am *AManager) SetLocationRegistry(r LocationRegistry) {
+	am.mu.Lock()
+	defer am.mu.Unlock()
+	am.locationReg = r
 }
 
 // Start 启动状态机 sweeper：空闲休眠标记与超时关闭。幂等。
@@ -188,6 +212,7 @@ func (am *AManager) Add(ab *ActorBase) error {
 	ab.touchActivity()
 	am.actorMap.Store(ab.name, ab)
 	am.addToCategories(ab)
+	am.registerLocation(ab)
 	return nil
 }
 
@@ -203,6 +228,39 @@ func (am *AManager) Remove(name string) {
 	}
 	am.actorMap.Delete(name)
 	am.removeFromCategories(ab)
+	am.unregisterLocation(ab)
+}
+
+// registerLocation 若 actor 可路由且已注入位置注册实现，则写入位置表。
+func (am *AManager) registerLocation(ab *ActorBase) {
+	if _, ok := ab.iActor.(Routable); !ok {
+		return
+	}
+	am.mu.RLock()
+	reg := am.locationReg
+	am.mu.RUnlock()
+	if reg == nil {
+		return
+	}
+	if err := reg.Register(ab.name); err != nil {
+		logger.ERROR("register actor location failed:", err, "actor:", ab.name)
+	}
+}
+
+// unregisterLocation 若 actor 可路由且已注入位置注册实现，则删除位置记录。
+func (am *AManager) unregisterLocation(ab *ActorBase) {
+	if _, ok := ab.iActor.(Routable); !ok {
+		return
+	}
+	am.mu.RLock()
+	reg := am.locationReg
+	am.mu.RUnlock()
+	if reg == nil {
+		return
+	}
+	if err := reg.Unregister(ab.name); err != nil {
+		logger.ERROR("unregister actor location failed:", err, "actor:", ab.name)
+	}
 }
 
 // CloseActor 关闭指定 Actor 并从管理器中移除，Actor 生命周期统一由管理器负责。
@@ -422,7 +480,20 @@ func (am *AManager) Deliver(name string, msg *protocol.Msg) error {
 }
 
 // Send 向其他 actor 异步投递消息（业务消息，计入活动时间）。
+// 本地未命中时经跨进程路由转发（透明跨进程）。
 func (am *AManager) Send(to, from string, msg interface{}) error {
+	if ab := am.Find(to); ab != nil {
+		return am.deliver(to, &Envelope{From: from, Kind: MsgSend, Payload: msg})
+	}
+	if r := am.remoteRouterSnapshot(); r != nil {
+		return r.Send(to, from, msg)
+	}
+	return ErrActorNotFound
+}
+
+// SendLocal 本地异步投递（不带远程回退），供远端 RPC 服务端（rpc.Serve）调用，
+// 避免远端请求在本节点再次触发远端路由造成环路。
+func (am *AManager) SendLocal(to, from string, msg interface{}) error {
 	return am.deliver(to, &Envelope{From: from, Kind: MsgSend, Payload: msg})
 }
 
@@ -432,14 +503,31 @@ func (am *AManager) SendSystem(to, from string, msg interface{}) error {
 }
 
 // Call 向其他 actor 发起 RPC 并等待回复。
+// 本地未命中时经跨进程路由转发（透明跨进程）。
 func (am *AManager) Call(to, from string, msg interface{}, timeout time.Duration) (interface{}, error) {
 	if to == from {
 		return nil, ErrSelfCall
 	}
+	if ab := am.Find(to); ab != nil {
+		return am.callLocal(ab, to, from, msg, timeout)
+	}
+	if r := am.remoteRouterSnapshot(); r != nil {
+		return r.Call(to, from, msg, timeout)
+	}
+	return nil, ErrActorNotFound
+}
+
+// CallLocal 本地 RPC（不带远程回退），供远端 RPC 服务端（rpc.Serve）调用，
+// 避免远端请求在本节点再次触发远端路由造成环路。
+func (am *AManager) CallLocal(to, from string, msg interface{}, timeout time.Duration) (interface{}, error) {
 	ab := am.Find(to)
 	if ab == nil {
 		return nil, ErrActorNotFound
 	}
+	return am.callLocal(ab, to, from, msg, timeout)
+}
+
+func (am *AManager) callLocal(ab *ActorBase, to, from string, msg interface{}, timeout time.Duration) (interface{}, error) {
 	if ab.isClosed() {
 		return nil, ErrActorClose
 	}

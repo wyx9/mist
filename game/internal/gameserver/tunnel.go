@@ -9,8 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"simple_game/game/api/protos/pt"
 	"simple_game/game/internal/actor"
 	core "simple_game/game/internal/actor/core"
+	"simple_game/game/internal/rpc"
 	"simple_game/game/pkg/codec"
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/network"
@@ -27,6 +29,15 @@ func (l *gatewayLink) writeFrame(typ byte, tunnelID string, data []byte) error {
 	l.writeMu.Lock()
 	defer l.writeMu.Unlock()
 	return l.conn.WriteMessage(codec.PackTunnelFrame(typ, tunnelID, data))
+}
+
+// rpcTransport 实现 rpc.Transport：把 RpcFrame 序列化字节打包为 TunnelRPC 隧道帧写回 gateway。
+type rpcTransport struct {
+	link *gatewayLink
+}
+
+func (t *rpcTransport) WriteFrame(payload []byte) error {
+	return t.link.writeFrame(codec.TunnelRPC, "", payload)
 }
 
 // TunnelConn 虚拟玩家连接：实现 network.NetConn，写操作封装为隧道帧发往 gateway 长连接。
@@ -70,6 +81,11 @@ type tunnelHandshake struct {
 // handleGatewayLink 处理一条 gateway 长连接：读隧道帧并分发。
 func (s *Server) handleGatewayLink(link *gatewayLink) {
 	defer link.conn.Close()
+	// 挂载内部 RPC transport（当前单 gateway：直接用这条连接作为跨进程路由写路径）。
+	if s.rpcClient != nil {
+		s.rpcClient.SetTransport(&rpcTransport{link: link})
+		defer s.rpcClient.OnDisconnect()
+	}
 	for {
 		data, err := link.conn.ReadMessage()
 		if err != nil {
@@ -113,8 +129,46 @@ func (s *Server) handleTunnelFrame(link *gatewayLink, data []byte) error {
 		return link.writeFrame(codec.TunnelPong, "", nil)
 	case codec.TunnelPong:
 		return nil
+	case codec.TunnelRPC:
+		return s.handleRPCFrame(link, payload)
 	}
 	return fmt.Errorf("unknown tunnel frame type: %d", typ)
+}
+
+// handleRPCFrame 处理 gateway 转发来的内部 RPC 帧。
+// RPC_REQUEST 走统一 worker pool 投递到本地 actor（与客户端消息同池，保证同 actor 有序）；
+// RPC_RESPONSE 唤醒等待中的本地调用。
+func (s *Server) handleRPCFrame(link *gatewayLink, payload []byte) error {
+	frame := &pt.RpcFrame{}
+	if err := rpc.UnmarshalFrame(payload, frame); err != nil {
+		return err
+	}
+	switch frame.Kind {
+	case pt.RpcKind_RPC_REQUEST:
+		s.Dispatch(frame.Target, func() {
+			if err := rpc.Serve(s.ActorManner, frame, replyRPC(link)); err != nil {
+				logger.ERROR("rpc serve failed:", err, "method:", frame.Method)
+			}
+		})
+		return nil
+	case pt.RpcKind_RPC_RESPONSE:
+		if s.rpcClient != nil {
+			s.rpcClient.OnResponse(frame)
+		}
+		return nil
+	}
+	return fmt.Errorf("unknown rpc frame kind: %d", frame.Kind)
+}
+
+// replyRPC 回写 RPC 响应帧到当前 gateway 长连接。
+func replyRPC(link *gatewayLink) func(*pt.RpcFrame) error {
+	return func(frame *pt.RpcFrame) error {
+		data, err := rpc.MarshalFrame(frame)
+		if err != nil {
+			return err
+		}
+		return link.writeFrame(codec.TunnelRPC, "", data)
+	}
 }
 
 func (s *Server) handleTunnelHandshake(link *gatewayLink, tunnelID string, payload []byte) error {

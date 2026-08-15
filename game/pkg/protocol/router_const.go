@@ -18,6 +18,9 @@ const (
 
 	CmdChatHistory
 	CmdChatHistoryRsp // 10
+
+	CmdPlayerInfo
+	CmdPlayerInfoRsp // 12
 )
 
 // 推送命令号（MsgTypePush，服务端主动下发），与请求/响应命令号隔离。
@@ -47,6 +50,7 @@ var ReqRsp = map[uint16]uint16{
 	CmdHeart:       CmdHeartRsp,
 	CmdSendChat:    CmdSendChatRsp,
 	CmdChatHistory: CmdChatHistoryRsp,
+	CmdPlayerInfo:  CmdPlayerInfoRsp,
 }
 
 // RspCmd 返回请求对应的响应命令号；未绑定时默认 = 请求命令号 + 1。

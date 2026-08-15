@@ -14,6 +14,7 @@ const (
 	TunnelKick         byte = 4 // 任一侧通知关闭某隧道
 	TunnelPing         byte = 5 // gateway<->game 保活
 	TunnelPong         byte = 6
+	TunnelRPC          byte = 7 // game<->game 内部 RPC 信封（经 gateway 路由，payload 为 pt.RpcFrame）
 )
 
 // PackTunnelFrame 打包隧道帧。
