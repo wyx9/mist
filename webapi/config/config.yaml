@@ -7,6 +7,11 @@ GatewayAddr: "127.0.0.1:8889"
 TokenSecret: "shared-secret-key"
 TokenExpire: 24h
 
+# 玩家分配 game 节点的策略
+GameSelect:
+  Strategy: "hash"    # fixed（指定节点）/ hash（按玩家名哈希，默认）
+  FixedNode: ""       # Strategy=fixed 时指定的目标 game 地址，如 "127.0.0.1:9900"
+
 SaveLog: false
 
 MySql:

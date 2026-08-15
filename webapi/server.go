@@ -12,13 +12,14 @@ import (
 )
 
 // startWebAPI 启动 WebAPI HTTP 服务。
-func startWebAPI(addr string, db *sqlx.DB, rdb *redis.Client, gatewayAddr, tokenSecret string, tokenExpire time.Duration) {
+func startWebAPI(addr string, db *sqlx.DB, rdb *redis.Client, gatewayAddr, tokenSecret string, tokenExpire time.Duration, gameSelect gameSelectCfg) {
 	handler := &loginHandler{
 		db:          db,
 		rdb:         rdb,
-		gatewayAddr:   gatewayAddr,
+		gatewayAddr: gatewayAddr,
 		tokenSecret: []byte(tokenSecret),
 		tokenExpire: tokenExpire,
+		gameSelect:  gameSelect,
 	}
 
 	http.HandleFunc("/login", cors(handler.ServeHTTP))

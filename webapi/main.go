@@ -16,15 +16,22 @@ import (
 	"simple_game/game/pkg/mysql"
 )
 
+// gameSelectCfg 玩家分配 game 节点的策略配置。
+type gameSelectCfg struct {
+	Strategy  string `yaml:"Strategy"`  // fixed（指定节点）/ hash（哈希，默认）
+	FixedNode string `yaml:"FixedNode"` // Strategy=fixed 时指定的目标 game 地址
+}
+
 type webapiConfig struct {
 	Http struct {
 		Addr string `yaml:"Addr"`
 		Port string `yaml:"Port"`
 	} `yaml:"Http"`
-	GatewayAddr   string `yaml:"GatewayAddr"`
+	GatewayAddr string `yaml:"GatewayAddr"`
 	TokenSecret string `yaml:"TokenSecret"`
 	TokenExpire string `yaml:"TokenExpire"`
 	SaveLog     bool   `yaml:"SaveLog"`
+	GameSelect  gameSelectCfg `yaml:"GameSelect"`
 	MySql       struct {
 		Addr     string `yaml:"Addr"`
 		Port     int    `yaml:"Port"`
@@ -48,6 +55,14 @@ func main() {
 	cfg := &webapiConfig{}
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		fmt.Println("parse config failed:", err)
+		os.Exit(1)
+	}
+
+	// 校验分配策略（fail fast）
+	switch cfg.GameSelect.Strategy {
+	case "", selectFixed, selectHash:
+	default:
+		fmt.Println("invalid GameSelect.Strategy:", cfg.GameSelect.Strategy, "(expect fixed|hash)")
 		os.Exit(1)
 	}
 
@@ -88,7 +103,7 @@ func main() {
 
 	// 启动
 	addr := fmt.Sprintf("%s:%s", cfg.Http.Addr, cfg.Http.Port)
-	go startWebAPI(addr, mysql.DB, rdb, cfg.GatewayAddr, cfg.TokenSecret, tokenExpire)
+	go startWebAPI(addr, mysql.DB, rdb, cfg.GatewayAddr, cfg.TokenSecret, tokenExpire, cfg.GameSelect)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
