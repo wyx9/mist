@@ -209,6 +209,17 @@ select { cursor: pointer; }
 .online-count { font-family: var(--zh); font-size: 12px; color: var(--dim); }
 .online-count b { color: var(--amber); }
 
+.player-query { display: flex; gap: 8px; margin-bottom: 10px; }
+.player-query input { flex: 1; }
+.query-result {
+  font-family: var(--zh);
+  font-size: 12px;
+  color: var(--green);
+  margin-bottom: 10px;
+  min-height: 1em;
+  word-break: break-all;
+}
+
 .player-list {
   list-style: none;
   display: flex;

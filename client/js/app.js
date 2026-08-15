@@ -224,6 +224,30 @@ function sendChat() {
     });
 }
 
+// queryPlayer 查询指定玩家信息（A 查 B，触发跨节点 RPC）。
+function queryPlayer() {
+  const input = $('playerQueryInput');
+  const name = input.value.trim();
+  if (!name) { toast('请输入要查询的玩家名'); return; }
+
+  $('btnQueryPlayer').disabled = true;
+  ws.sendReq(11, 'PlayerInfoReq', { Name: name }, { uid: state.uid, timeoutMs: 8000 })
+    .then((res) => {
+      const d = new Date(Number(res.LastLoginAt) * 1000);
+      $('playerQueryResult').textContent =
+        '查询结果 → UID=' + res.UUid +
+        ' 名称=' + res.Name +
+        ' 在线=' + (res.Online ? '是' : '否') +
+        ' 最后登录=' + (Number.isFinite(d.getTime()) ? d.toLocaleString('zh-CN') : '-');
+    })
+    .catch((e) => {
+      $('playerQueryResult').textContent = '查询失败: ' + e.message;
+    })
+    .finally(() => {
+      $('btnQueryPlayer').disabled = false;
+    });
+}
+
 function appendChatMessage(message) {
   state.messages.push({
     uid: message.UUid,
@@ -437,6 +461,10 @@ function init() {
   $('btnSendChat').addEventListener('click', sendChat);
   $('chatInput').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') sendChat();
+  });
+  $('btnQueryPlayer').addEventListener('click', queryPlayer);
+  $('playerQueryInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') queryPlayer();
   });
   $('btnLogout').addEventListener('click', logout);
   restoreSession();

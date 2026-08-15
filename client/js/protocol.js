@@ -96,6 +96,8 @@ const MSGS = {
   LobbyPlayer: { 1: ['UID', 'varint'], 2: ['Name', 'string'] },
   LobbyJoinPush: { 1: ['Player', 'msg', 'LobbyPlayer'], 2: ['Online', 'varint'] },
   LobbyLeavePush: { 1: ['Player', 'msg', 'LobbyPlayer'], 2: ['Online', 'varint'] },
+  PlayerInfoReq: { 1: ['Name', 'string'] },
+  PlayerInfoRes: { 1: ['UUid', 'varint'], 2: ['Name', 'string'], 3: ['Online', 'varint'], 4: ['LastLoginAt', 'varint'] },
 };
 
 // 命令号登记表
@@ -110,6 +112,8 @@ const CMDS = {
   8: { name: 'CmdLobbyInfoRsp', rsp: 'LobbyInfoRes' },
   9: { name: 'CmdChatHistory', req: 'ChatHistoryReq', rsp: 'ChatHistoryRes' },
   10: { name: 'CmdChatHistoryRsp', rsp: 'ChatHistoryRes' },
+  11: { name: 'CmdPlayerInfo', req: 'PlayerInfoReq', rsp: 'PlayerInfoRes' },
+  12: { name: 'CmdPlayerInfoRsp', rsp: 'PlayerInfoRes' },
   10000: { name: 'CmdChatPush', push: 'ChatNtf' },
   10001: { name: 'CmdLobbyJoinPush', push: 'LobbyJoinPush' },
   10002: { name: 'CmdLobbyLeavePush', push: 'LobbyLeavePush' },
