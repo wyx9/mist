@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+	"google.golang.org/protobuf/proto"
 
+	"simple_game/game/api/protos/pt"
 	"simple_game/game/pkg/codec"
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/network"
@@ -32,10 +34,12 @@ type handshakeResult struct {
 }
 
 // gameLink 到单个 game 的长连接，上面多路复用多个玩家隧道。
+// 同时作为内部 RPC 的转发通道：game 之间的 RPC 请求/响应经此长连接转发。
 type gameLink struct {
 	addr     string
 	conn     network.NetConn
 	writeMu  sync.Mutex
+	rdb      *redis.Client
 	sessions sync.Map // tunnelID -> *Session
 	pending  sync.Map // tunnelID -> chan handshakeResult
 	closed   atomic.Bool
@@ -75,7 +79,7 @@ func gamePollLoop(rdb *redis.Client) {
 			if _, ok := gameLinks.Load(addr); ok {
 				continue
 			}
-			go connectGame(addr)
+			go connectGame(rdb, addr)
 		}
 		gameLinks.Range(func(key, value interface{}) bool {
 			addr := key.(string)
@@ -88,14 +92,14 @@ func gamePollLoop(rdb *redis.Client) {
 	}
 }
 
-func connectGame(addr string) {
+func connectGame(rdb *redis.Client, addr string) {
 	conn, err := network.Dial("tcp", addr)
 	if err != nil {
 		logger.ERROR("dial game failed:", addr, err)
 		return
 	}
 	logger.INFO("game connected:", addr)
-	link := &gameLink{addr: addr, conn: conn}
+	link := &gameLink{addr: addr, conn: conn, rdb: rdb}
 	gameLinks.Store(addr, link)
 	go link.readerLoop()
 	go link.pingLoop()
@@ -140,9 +144,91 @@ func (l *gameLink) readerLoop() {
 			_ = l.writeFrame(codec.TunnelPong, "", nil)
 		case codec.TunnelPong:
 			// 保活信号：读超时已覆盖断链检测
+		case codec.TunnelRPC:
+			l.handleRPC(payload)
 		}
 	}
 	l.closeAllSessions()
+}
+
+// handleRPC 处理 game 转发来的内部 RPC 帧：请求按 target 解析节点转发，响应按 origin_node 回程。
+func (l *gameLink) handleRPC(payload []byte) {
+	frame := &pt.RpcFrame{}
+	if err := proto.Unmarshal(payload, frame); err != nil {
+		logger.ERROR("gateway parse rpc frame failed:", err)
+		return
+	}
+	switch frame.Kind {
+	case pt.RpcKind_RPC_REQUEST:
+		l.routeRequest(frame)
+	case pt.RpcKind_RPC_RESPONSE:
+		l.routeResponse(frame)
+	}
+}
+
+// routeRequest 解析目标 actor 所在节点并转发请求；失败时回错误响应。
+func (l *gameLink) routeRequest(frame *pt.RpcFrame) {
+	addr, found, err := registry.ResolveActorLoc(context.Background(), l.rdb, frame.Target)
+	if err != nil {
+		l.replyError(frame, "resolve actor location: "+err.Error())
+		return
+	}
+	if !found {
+		l.replyError(frame, "actor not found: "+frame.Target)
+		return
+	}
+	target, ok := gameLinks.Load(addr)
+	if !ok {
+		l.replyError(frame, "game unavailable: "+addr)
+		return
+	}
+	if err := target.(*gameLink).writeRPC(frame); err != nil {
+		l.replyError(frame, "forward rpc failed: "+err.Error())
+	}
+}
+
+// routeResponse 按 origin_node 把响应转发回发起方节点。
+func (l *gameLink) routeResponse(frame *pt.RpcFrame) {
+	target, ok := gameLinks.Load(frame.OriginNode)
+	if !ok {
+		logger.ERROR("gateway rpc response origin node unavailable:", frame.OriginNode)
+		return
+	}
+	if err := target.(*gameLink).writeRPC(frame); err != nil {
+		logger.ERROR("gateway forward rpc response failed:", err)
+	}
+}
+
+// writeRPC 把 RpcFrame 序列化后经本长连接写回。
+func (l *gameLink) writeRPC(frame *pt.RpcFrame) error {
+	data, err := proto.Marshal(frame)
+	if err != nil {
+		return err
+	}
+	return l.writeFrame(codec.TunnelRPC, "", data)
+}
+
+// replyError 对失败的请求回错误响应（仅 Call 需要回包）。
+func (l *gameLink) replyError(frame *pt.RpcFrame, msg string) {
+	if !frame.IsCall {
+		logger.ERROR("gateway rpc request failed:", msg, "target:", frame.Target)
+		return
+	}
+	resp := &pt.RpcFrame{
+		Kind:        pt.RpcKind_RPC_RESPONSE,
+		ReqId:       frame.ReqId,
+		OriginNode:  frame.OriginNode,
+		OriginActor: frame.Target,
+		Error:       msg,
+	}
+	target, ok := gameLinks.Load(frame.OriginNode)
+	if !ok {
+		logger.ERROR("gateway reply error origin node unavailable:", frame.OriginNode)
+		return
+	}
+	if err := target.(*gameLink).writeRPC(resp); err != nil {
+		logger.ERROR("gateway reply error failed:", err)
+	}
 }
 
 func (l *gameLink) pingLoop() {
@@ -159,12 +245,16 @@ func (l *gameLink) pingLoop() {
 	}
 }
 
-// closeAllSessions 长连接断开：关闭其上所有客户端会话并删除连接。
+// closeAllSessions 长连接断开：关闭其上所有客户端会话、清理该节点的 actor 位置并删除连接。
 func (l *gameLink) closeAllSessions() {
 	l.sessions.Range(func(key, value interface{}) bool {
 		closeClientSession(value.(*Session))
 		return true
 	})
+	// 节点失联：清理指向该节点的 actor 位置记录（best-effort，最终一致）
+	if l.rdb != nil {
+		registry.SweepActorLoc(context.Background(), l.rdb, l.addr)
+	}
 	l.closed.Store(true)
 	gameLinks.Delete(l.addr)
 	_ = l.conn.Close()
