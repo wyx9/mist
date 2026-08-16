@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const $ = (id) => document.getElementById(id);
-const SESSION_KEY = 'coffee_merge_session';
+const SESSION_KEY = 'tetris_battle_session';
 const PASSWORD = '123';
 
 const state = {
@@ -332,12 +332,11 @@ function renderPlayers() {
   }
   for (const p of list) {
     const li = document.createElement('li');
-    const img = document.createElement('img');
-    img.src = 'assets/bean.png';
-    img.alt = '';
+    const avatar = document.createElement('span');
+    avatar.className = 'avatar';
     const name = document.createElement('span');
     name.textContent = p.name;
-    li.appendChild(img);
+    li.appendChild(avatar);
     li.appendChild(name);
     if (String(p.uid) === String(state.uid)) {
       const me = document.createElement('span');

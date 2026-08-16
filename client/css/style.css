@@ -79,7 +79,22 @@ img { image-rendering: pixelated; image-rendering: crisp-edges; }
   align-items: center;
   gap: 16px;
 }
-.logo { width: 128px; height: 64px; }
+.tetris-logo {
+  display: grid;
+  grid-template-columns: repeat(3, 22px);
+  grid-auto-rows: 22px;
+  gap: 4px;
+}
+.tetris-logo.lg {
+  grid-template-columns: repeat(3, 30px);
+  grid-auto-rows: 30px;
+  gap: 5px;
+}
+.tetris-logo i {
+  display: block;
+  border: 3px solid var(--ink);
+  box-shadow: inset 0 3px 0 rgba(255, 255, 255, .3), inset 0 -3px 0 rgba(0, 0, 0, .3);
+}
 .game-title {
   font-size: 22px;
   color: var(--amber);
@@ -149,7 +164,6 @@ select { cursor: pointer; }
   box-shadow: 0 0 0 4px var(--line), 8px 8px 0 rgba(0, 0, 0, 0.45);
 }
 .head-left { display: flex; align-items: center; gap: 12px; }
-.logo-sm { width: 64px; height: 32px; }
 .head-left h2 { font-size: 15px; color: var(--amber); letter-spacing: 2px; }
 .player-info {
   margin-top: 6px;
@@ -176,28 +190,28 @@ select { cursor: pointer; }
   align-items: stretch;
 }
 .panel { width: 100%; max-width: 100%; }
-.chain-panel { display: flex; flex-direction: column; gap: 14px; }
-.chain-panel h3, .list-panel h3 { font-size: 12px; color: var(--amber); letter-spacing: 1px; }
-
-.chain {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin: 6px 0;
-}
-.chain-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  font-size: 9px;
+.help-panel { display: flex; flex-direction: column; gap: 14px; }
+.help-panel h3, .list-panel h3 { font-size: 12px; color: var(--amber); letter-spacing: 1px; }
+.help-rules {
+  font-family: var(--zh);
+  font-size: 12px;
+  line-height: 1.7;
   color: var(--dim);
 }
-.chain-item img { width: 56px; height: 56px; }
-.chain-arrow { color: var(--amber); font-size: 22px; }
-.chain-note { font-family: var(--zh); font-size: 12px; color: var(--dim); text-align: center; }
+.help-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.help-keys span {
+  font-family: var(--zh);
+  font-size: 11px;
+  color: var(--text);
+  background: var(--panel2);
+  border: 3px solid var(--ink);
+  padding: 6px 10px;
+}
+.help-panel .pixel-btn { align-self: flex-start; }
 
 .list-panel { width: 100%; }
 .list-head {
@@ -238,7 +252,14 @@ select { cursor: pointer; }
   font-family: var(--zh);
   font-size: 13px;
 }
-.player-list li img { width: 22px; height: 22px; }
+.player-list li .avatar {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  background: var(--green);
+  border: 3px solid var(--ink);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, .3);
+}
 .player-list li .me { margin-left: auto; color: var(--green); font-size: 11px; }
 .player-list .empty { justify-content: center; color: var(--dim); border-style: dashed; }
 
@@ -281,61 +302,266 @@ select { cursor: pointer; }
 .chat-input-row { display: flex; gap: 8px; }
 .chat-input-row input { flex: 1; }
 
-#view-game { padding: 20px; }
+/* ── 游戏视图（俄罗斯方块） ── */
+#view-game { padding: 16px; }
+.game-wrap { width: 100%; display: flex; justify-content: center; }
 .game-shell {
   width: 100%;
-  max-width: 620px;
+  max-width: 880px;
+  padding: 18px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  align-items: stretch;
+  gap: 14px;
 }
 .game-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
 }
-.game-score {
+.game-stats {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  font-family: var(--zh);
-  font-size: 14px;
-  color: var(--dim);
-}
-.game-score b {
-  color: var(--amber);
-  font-size: 20px;
-}
-.merge-board {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 8px;
-  background: #160d07;
-  border: 4px solid var(--ink);
-  padding: 10px;
-}
-.merge-cell {
-  aspect-ratio: 1 / 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 6px;
-  background: var(--panel2);
-  border: 3px solid var(--ink);
-  cursor: pointer;
-}
-.merge-cell:hover { filter: brightness(1.12); }
-.merge-cell img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
-.merge-cell.empty { border-style: dashed; opacity: .68; }
-.merge-cell.selected { border-color: var(--amber); box-shadow: 0 0 0 3px rgba(201, 141, 63, .55); }
-.game-hint {
+  gap: 16px;
   font-family: var(--zh);
   font-size: 12px;
-  line-height: 1.6;
+  color: var(--dim);
+}
+.game-stats b {
+  color: var(--amber);
+  font-size: 15px;
+  font-family: var(--pixel);
+}
+.game-actions { display: flex; gap: 8px; }
+
+.game-body {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: center;
+}
+.board-area { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+
+.tetris-board {
+  position: relative;
+  width: clamp(230px, 40vh, 330px);
+  aspect-ratio: 1 / 2;
+  background: #120c07;
+  border: 4px solid var(--ink);
+  box-shadow: 0 0 0 4px var(--line);
+  overflow: hidden;
+}
+.board-grid {
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(to right, rgba(255, 255, 255, .05) 0 1px, transparent 1px 10%),
+    repeating-linear-gradient(to bottom, rgba(255, 255, 255, .05) 0 1px, transparent 1px 5%);
+  pointer-events: none;
+}
+.board-stack {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* 方块配色（board-cell / piece-block / mini-block / mini-cell / logo 共用） */
+.t-I { background-color: #3ec8d8; }
+.t-J { background-color: #4a7bff; }
+.t-L { background-color: #ff9d3c; }
+.t-O { background-color: #ffd23e; }
+.t-S { background-color: #5fd06a; }
+.t-T { background-color: #b06bf0; }
+.t-Z { background-color: #ff5f56; }
+
+.board-cell {
+  position: absolute;
+  width: 10%;
+  height: 5%;
+  border: 2px solid rgba(0, 0, 0, .35);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, .28), inset 0 -2px 0 rgba(0, 0, 0, .28);
+  transition: top .16s ease-out;
+}
+@keyframes cellLand {
+  0% { transform: scaleY(1.28); }
+  100% { transform: scaleY(1); }
+}
+.board-cell.land {
+  animation: cellLand .12s ease-out;
+  transform-origin: top;
+}
+@keyframes rowFlash {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .15; }
+}
+.board-cell.row-flash {
+  animation: rowFlash .16s linear 2;
+}
+
+.piece-group, .ghost-group {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 40%;
+  height: 20%;
+  transition: transform .07s linear;
+  will-change: transform;
+}
+.piece-block, .ghost-block {
+  position: absolute;
+  width: 25%;
+  height: 25%;
+}
+.piece-block {
+  border: 2px solid rgba(0, 0, 0, .35);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, .3), inset 0 -2px 0 rgba(0, 0, 0, .3);
+}
+.ghost-group { opacity: .35; }
+.ghost-block {
+  border: 2px dashed currentColor;
+  background: transparent;
+}
+.ghost-I { color: #3ec8d8; }
+.ghost-J { color: #4a7bff; }
+.ghost-L { color: #ff9d3c; }
+.ghost-O { color: #ffd23e; }
+.ghost-S { color: #5fd06a; }
+.ghost-T { color: #b06bf0; }
+.ghost-Z { color: #ff5f56; }
+
+/* 棋盘覆盖层 */
+.board-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: rgba(10, 6, 3, .74);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+.board-overlay .over-title {
+  font-size: 15px;
+  color: var(--amber);
+  text-shadow: 3px 3px 0 #000;
+  letter-spacing: 2px;
+}
+.board-overlay .over-sub {
+  font-family: var(--zh);
+  font-size: 12px;
+  color: var(--dim);
+}
+@keyframes readyPop {
+  0% { transform: scale(.5); opacity: 0; }
+  60% { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(1); }
+}
+#readyText {
+  font-size: 20px;
+  color: var(--cream);
+  text-shadow: 3px 3px 0 #000;
+  animation: readyPop .4s ease-out;
+}
+
+.game-hint {
+  font-family: var(--zh);
+  font-size: 11px;
   color: var(--dim);
   text-align: center;
+}
+
+/* 触屏按钮 */
+.touch-controls {
+  display: none;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  width: min(330px, 100%);
+}
+.touch-controls .pixel-btn { flex: 1; min-width: 44px; padding: 12px 8px; }
+@media (pointer: coarse) {
+  .touch-controls { display: flex; }
+}
+
+/* 信息 + 观战侧栏 */
+.side-area {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 220px;
+  flex-shrink: 0;
+}
+.info-panel {
+  padding: 14px;
+  display: flex;
+  gap: 14px;
+}
+.info-col { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.info-panel h4, .spectate-panel h4 {
+  font-size: 10px;
+  color: var(--amber);
+  letter-spacing: 1px;
+}
+.hold-box, .mini-box {
+  position: relative;
+  background: #160d07;
+  border: 3px solid var(--ink);
+}
+.hold-box { width: 60px; height: 48px; }
+.next-boxes { display: flex; flex-direction: column; gap: 6px; }
+.mini-box { width: 60px; height: 30px; }
+.mini-block {
+  position: absolute;
+  border: 2px solid rgba(0, 0, 0, .35);
+}
+
+.spectate-panel { padding: 14px; }
+.spectate-panel h4 { line-height: 1.6; }
+.spectate-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+.spectate-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.mini-board {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  grid-template-rows: repeat(20, 1fr);
+  width: 86px;
+  height: 172px;
+  background: #120c07;
+  border: 3px solid var(--ink);
+}
+.mini-cell { background: #1d130c; }
+.mini-board.waiting { opacity: .4; }
+.mini-board.waiting .mini-cell { background: #16100a; }
+.mini-name {
+  font-family: var(--zh);
+  font-size: 10px;
+  color: var(--dim);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .game-body { flex-direction: column; align-items: center; }
+  .side-area {
+    flex-direction: row;
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .spectate-grid { grid-template-columns: repeat(4, auto); }
+  .touch-controls { display: flex; }
 }
 
 /* ── 消息日志（固定右侧） ── */
@@ -453,11 +679,13 @@ select { cursor: pointer; }
   .head-left { justify-content: center; }
   .conn-box { margin-left: 0; justify-content: center; }
   .pill { flex: 1; text-align: center; }
-  .chain-item img { width: 44px; height: 44px; }
+  .help-keys span { font-size: 10px; }
+  .tetris-board { width: min(320px, 82vw); }
   .player-list { max-height: 40vh; }
   .chat-list { height: 40vh; }
   .game-head { flex-wrap: wrap; }
-  .game-score { margin-left: auto; }
+  .game-stats { margin-left: auto; }
+  .spectate-grid { grid-template-columns: repeat(2, auto); }
   .log-panel { padding: 14px; }
   .log-actions .pixel-btn { flex: 1; }
   .log-filter { font-size: 13px; }

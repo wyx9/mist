@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>咖啡合成 · Coffee Merge</title>
+<title>方块大战 · TETRIS BATTLE</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
@@ -14,9 +14,12 @@
 <!-- 登录视图 -->
 <section id="view-login" class="view">
   <div class="login-panel pixel-panel">
-    <img class="logo" src="assets/logo.png" alt="Coffee Merge logo">
-    <h1 class="game-title">咖啡合成</h1>
-    <p class="game-sub">COFFEE MERGE · 多人同屏合成消除</p>
+    <div class="tetris-logo lg" aria-hidden="true">
+      <i class="t-I"></i><i class="t-J"></i><i class="t-O"></i>
+      <i class="t-T"></i><i class="t-S"></i><i class="t-Z"></i>
+    </div>
+    <h1 class="game-title">方块大战</h1>
+    <p class="game-sub">TETRIS BATTLE · 多人俄罗斯方块对战</p>
 
     <div class="field">
       <label for="serverSel">游戏服务器</label>
@@ -27,7 +30,7 @@
 
     <div class="field">
       <label for="accountInput">玩家账号（用户 ID）</label>
-      <input id="accountInput" type="text" maxlength="32" placeholder="例如 barista_01"
+      <input id="accountInput" type="text" maxlength="32" placeholder="例如 player_01"
              autocomplete="username" spellcheck="false">
     </div>
 
@@ -43,9 +46,12 @@
     <div class="lobby-shell">
       <header class="lobby-head">
         <div class="head-left">
-          <img class="logo-sm" src="assets/logo.png" alt="logo">
+          <div class="tetris-logo" aria-hidden="true">
+            <i class="t-I"></i><i class="t-J"></i><i class="t-O"></i>
+            <i class="t-T"></i><i class="t-S"></i><i class="t-Z"></i>
+          </div>
           <div>
-            <h2>咖啡大厅</h2>
+            <h2>方块大战</h2>
             <div class="player-info">
               <span id="lobbyName">-</span> · UID <span id="lobbyUid">-</span>
             </div>
@@ -62,21 +68,22 @@
       </header>
 
       <main class="lobby-body">
-        <section class="panel chain-panel pixel-panel">
-          <h3>咖啡合成链</h3>
-          <div class="chain">
-            <div class="chain-item"><img src="assets/chain_bean.png" alt="咖啡果"><span>咖啡果</span></div>
-            <div class="chain-arrow">›</div>
-            <div class="chain-item"><img src="assets/chain_green.png" alt="生豆"><span>生豆</span></div>
-            <div class="chain-arrow">›</div>
-            <div class="chain-item"><img src="assets/chain_roast.png" alt="烘焙豆"><span>烘焙豆</span></div>
-            <div class="chain-arrow">›</div>
-            <div class="chain-item"><img src="assets/chain_espresso.png" alt="浓缩"><span>浓缩</span></div>
-            <div class="chain-arrow">›</div>
-            <div class="chain-item"><img src="assets/chain_latte.png" alt="拿铁"><span>拿铁</span></div>
+        <section class="panel help-panel pixel-panel">
+          <h3>玩法说明</h3>
+          <p class="help-rules">
+            俄罗斯方块对战：移动旋转方块，填满一行即可消除并得分。
+            后续版本将接入服务器，与其他玩家实时对战——消除时随机选中一名玩家发动攻击（增加垃圾行）。
+          </p>
+          <div class="help-keys">
+            <span>← → 移动</span>
+            <span>↓ 软降</span>
+            <span>↑ / X 旋转</span>
+            <span>Z 逆旋转</span>
+            <span>空格 硬降</span>
+            <span>C 暂存</span>
+            <span>P 暂停</span>
           </div>
-          <p class="chain-note">合成消除玩法即将开放，敬请期待</p>
-          <button id="btnStart" class="pixel-btn primary" type="button" disabled>开始游戏（开发中）</button>
+          <button id="btnStart" class="pixel-btn primary" type="button">开始游戏</button>
         </section>
 
         <section class="panel list-panel pixel-panel">
@@ -128,19 +135,76 @@
   <div id="toast" class="toast hidden"></div>
 </section>
 
-<!-- 单人合成游戏 -->
+<!-- 俄罗斯方块对战 -->
 <section id="view-game" class="view hidden">
-  <div class="game-shell pixel-panel">
-    <header class="game-head">
-      <button id="btnBackLobby" class="pixel-btn small secondary" type="button">返回大厅</button>
-      <div class="game-score">
-        <span>得分</span>
-        <b id="mergeScore">0</b>
+  <div class="game-wrap">
+    <div class="game-shell pixel-panel">
+      <header class="game-head">
+        <button id="btnBackLobby" class="pixel-btn small secondary" type="button">返回大厅</button>
+        <div class="game-stats">
+          <span>分数 <b id="gameScore">0</b></span>
+          <span>消行 <b id="gameLines">0</b></span>
+          <span>等级 <b id="gameLevel">1</b></span>
+        </div>
+        <div class="game-actions">
+          <button id="btnPause" class="pixel-btn small" type="button">暂停</button>
+          <button id="btnRestart" class="pixel-btn small" type="button">重开</button>
+        </div>
+      </header>
+
+      <div class="game-body">
+        <!-- 主棋盘 -->
+        <div class="board-area">
+          <div class="tetris-board" id="tetrisBoard" aria-label="俄罗斯方块棋盘">
+            <div class="board-grid"></div>
+            <div class="board-stack" id="boardStack"></div>
+            <div id="ghostGroup"></div>
+            <div id="pieceGroup"></div>
+
+            <div class="board-overlay hidden" id="overlayReady">
+              <span id="readyText">READY</span>
+            </div>
+            <div class="board-overlay hidden" id="overlayPause">
+              <span class="over-title">PAUSED</span>
+              <button id="btnResume" class="pixel-btn small" type="button">继续</button>
+              <button id="btnQuitPause" class="pixel-btn small secondary" type="button">返回大厅</button>
+            </div>
+            <div class="board-overlay hidden" id="overlayOver">
+              <span class="over-title">GAME OVER</span>
+              <span class="over-sub" id="overStats"></span>
+              <button id="btnAgain" class="pixel-btn small" type="button">再来一局</button>
+              <button id="btnQuitOver" class="pixel-btn small secondary" type="button">返回大厅</button>
+            </div>
+          </div>
+          <p class="game-hint">←→ 移动 · ↑/X 旋转 · ↓ 软降 · 空格 硬降 · C 暂存 · P 暂停</p>
+          <div class="touch-controls" id="touchControls">
+            <button id="touchLeft" class="pixel-btn small" type="button">←</button>
+            <button id="touchRight" class="pixel-btn small" type="button">→</button>
+            <button id="touchDown" class="pixel-btn small" type="button">↓</button>
+            <button id="touchRotate" class="pixel-btn small" type="button">⟳</button>
+            <button id="touchDrop" class="pixel-btn small" type="button">⤓</button>
+          </div>
+        </div>
+
+        <!-- 信息 + 观战 -->
+        <aside class="side-area">
+          <div class="info-panel pixel-panel">
+            <div class="info-col">
+              <h4>HOLD</h4>
+              <div class="hold-box" id="holdBox"></div>
+            </div>
+            <div class="info-col">
+              <h4>NEXT</h4>
+              <div class="next-boxes" id="nextBoxes"></div>
+            </div>
+          </div>
+          <div class="spectate-panel pixel-panel">
+            <h4>其他玩家（服务器对战接入后实时同步）</h4>
+            <div class="spectate-grid" id="spectateGrid"></div>
+          </div>
+        </aside>
       </div>
-      <button id="btnRestart" class="pixel-btn small" type="button">重新开始</button>
-    </header>
-    <div id="mergeBoard" class="merge-board" aria-label="合成棋盘"></div>
-    <p class="game-hint">点击空位生成新元素；再点击两个同等级元素合成下一级。拿铁+拿铁会消除并得分。</p>
+    </div>
   </div>
 </section>
 
