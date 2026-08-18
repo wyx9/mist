@@ -21,7 +21,7 @@ const (
 
 // GlobalTask 全局定时任务（Redis 持久化，进程重启后仍生效）。
 type GlobalTask struct {
-	ID      string // 任务唯一 id（雪花 ID，为空时自动分配）
+	ID      string // 任务唯一 id（为空时自动分配）
 	Target  string // 目标 actor 名
 	DueAt   int64  // 到期 unix 秒
 	Tag     string // 业务标签，供目标 actor 区分任务
@@ -46,7 +46,7 @@ type globalTaskRec struct {
 	Payload []byte `json:"payload"`
 }
 
-// ScheduleGlobal 写入一个全局定时任务；ID 为空时自动分配雪花 ID。
+// ScheduleGlobal 写入一个全局定时任务；ID 为空时自动分配全局自增 ID。
 func ScheduleGlobal(ctx context.Context, rdb *redis.Client, task *GlobalTask) error {
 	if task.ID == "" {
 		task.ID = strconv.FormatInt(uid.NewUid(), 10)

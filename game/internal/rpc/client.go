@@ -24,7 +24,7 @@ var (
 // RemoteRouter 跨进程路由能力：由 rpc.Client 实现，注入 core.AManager。
 type RemoteRouter interface {
 	Call(to, from string, msg interface{}, timeout time.Duration) (interface{}, error)
-	Send(to, from string, msg interface{}) error
+	Cast(to, from string, msg interface{}) error
 }
 
 // Transport 写帧能力：由 gameserver 注入，负责把 RpcFrame 序列化字节打包为
@@ -135,8 +135,8 @@ func (c *Client) Call(to, from string, msg interface{}, timeout time.Duration) (
 	}
 }
 
-// Send 远端异步投递：marshal 请求并写帧，不等回包。
-func (c *Client) Send(to, from string, msg interface{}) error {
+// Cast 远端异步投递：marshal 请求并写帧，不等回包。
+func (c *Client) Cast(to, from string, msg interface{}) error {
 	method, err := MethodOf(msg)
 	if err != nil {
 		return err

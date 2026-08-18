@@ -134,8 +134,8 @@ func TestRemoteCallAndSend(t *testing.T) {
 	}
 
 	// 2. 异步远程投递：应触发对端 handler
-	if err := client.Send("echo", "client", &pt.RoomPlayerJoin{UID: 1, Name: "x"}); err != nil {
-		t.Fatalf("remote send: %v", err)
+	if err := client.Cast("echo", "client", &pt.RoomPlayerJoin{UID: 1, Name: "x"}); err != nil {
+		t.Fatalf("remote cast: %v", err)
 	}
 	select {
 	case v := <-noted:

@@ -34,9 +34,9 @@ func (c *ActorContext) Kind() MsgKind {
 	return c.env.Kind
 }
 
-// Send 向其他 actor 异步投递消息。
-func (c *ActorContext) Send(to string, msg interface{}) error {
-	return c.manager.Send(to, c.self, msg)
+// Cast 向其他 actor 异步投递消息。
+func (c *ActorContext) Cast(to string, msg interface{}) error {
+	return c.manager.Cast(to, c.self, msg)
 }
 
 // Call 向其他 actor 发起 RPC 并等待回复。

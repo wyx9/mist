@@ -16,7 +16,7 @@ func ChatController(ctx *route.HandlerContext[*actor.Player], req *pt.SendChatRe
 		return nil, err
 	}
 
-	if err := ctx.Comm.Send(actor.RoomActorName, &pt.LobbyChatMessage{
+	if err := ctx.Comm.Cast(actor.RoomActorName, &pt.LobbyChatMessage{
 		UID:  record.UID,
 		Name: record.Name,
 		Msg:  record.Msg,

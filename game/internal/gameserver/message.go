@@ -8,7 +8,9 @@ import (
 	"simple_game/game/pkg/protocol"
 )
 
-// handleMsg 将 Gateway 转发来的业务帧解析为消息信封，校验后投递到 worker pool。
+// handleMsg 将 Gateway 转发来的业务帧解析为消息信封，校验后直接投递到 actor 队列。
+// 同一 tunnel 的帧由单条连接的读协程序序处理，actor 队列自身保证串行有序；
+// Deliver 仅在 actor 队列满时阻塞（背压），符合流量控制语义。
 func (s *Server) handleMsg(msg []byte, tunnelID string) error {
 	m, err := protocol.DecodeMsg(msg)
 	if err != nil {
@@ -17,12 +19,9 @@ func (s *Server) handleMsg(msg []byte, tunnelID string) error {
 	if err := s.authorizeMsg(tunnelID, m); err != nil {
 		return err
 	}
-	// 通过 Server.Dispatch 投递到 worker pool，保证同一玩家消息有序
-	s.Dispatch(tunnelID, func() {
-		if err := s.Deliver(tunnelID, m); err != nil {
-			logger.ERROR("Deliver error:", err, "tunnelID:", tunnelID)
-		}
-	})
+	if err := s.Deliver(tunnelID, m); err != nil {
+		logger.ERROR("Deliver error:", err, "tunnelID:", tunnelID)
+	}
 	return nil
 }
 

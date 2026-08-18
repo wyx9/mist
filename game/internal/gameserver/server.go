@@ -21,12 +21,12 @@ import (
 	"simple_game/game/internal/actor"
 	core "simple_game/game/internal/actor/core"
 	"simple_game/game/internal/controller"
-	"simple_game/game/internal/dispatch"
 	"simple_game/game/internal/persist"
 	"simple_game/game/internal/rpc"
 	"simple_game/game/pkg/network"
 	"simple_game/game/pkg/registry"
 	"simple_game/game/pkg/timer"
+	"simple_game/game/pkg/uid"
 )
 
 // Server Game 逻辑服单例。聚合所有组件，统一生命周期。
@@ -54,9 +54,6 @@ type Server struct {
 
 	// 登录后绑定的玩家 uid 表 — tunnelID → int64(uid)
 	uidByTunnel sync.Map
-
-	// 消息路由层
-	workerPool *dispatch.WorkerPool
 
 	// 内部 RPC 客户端（跨进程透明路由）
 	rpcClient *rpc.Client
@@ -119,6 +116,7 @@ func (s *Server) Start(opts StartOptions) error {
 		cfg.MySql.User, cfg.MySql.PassWord, cfg.MySql.Addr, cfg.MySql.Port, cfg.MySql.DBName)
 	mysql.MysqlStart(dsn)
 	redis.RedisStart(cfg.Redis.Addr, cfg.Redis.PassWord, cfg.Redis.DB)
+	uid.Init(redis.RedisClient)
 	if err := configs.Init(redis.RedisClient); err != nil {
 		return fmt.Errorf("init configs: %w", err)
 	}
@@ -142,7 +140,6 @@ func (s *Server) Start(opts StartOptions) error {
 		return fmt.Errorf("start persistence: %w", err)
 	}
 	s.persist = persistMgr
-	s.workerPool = dispatch.NewWorkerPool(0) // CPU 核心数
 
 	// Phase 4: 对外服务 (goroutine)
 	s.ctx, s.cancel = context.WithCancel(context.Background())
@@ -208,27 +205,22 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 		s.persist.Stop(10 * time.Second)
 	}
 
-	// 4.5 停配置热更监听（须在关闭 Redis 连接之前）
+	// 5. 停配置热更监听（须在关闭 Redis 连接之前）
 	configs.StopWatch()
-
-	// 5. 关闭 worker pool
-	if s.workerPool != nil {
-		s.workerPool.Shutdown()
-	}
 
 	// 6. 取消 context
 	if s.cancel != nil {
 		s.cancel()
 	}
 
-	// 6.5 注销 game 注册（心跳协程已随 cancel 退出）
+	// 7. 注销 game 注册（心跳协程已随 cancel 退出）
 	if s.regAddr != "" {
 		if err := registry.Unregister(context.Background(), redis.RedisClient, s.regAddr); err != nil {
 			logger.ERROR("game registry unregister failed:", err)
 		}
 	}
 
-	// 7. 等待所有连接处理完成
+	// 8. 等待所有连接处理完成
 	done := make(chan struct{})
 	go func() {
 		s.wg.Wait()
@@ -240,7 +232,7 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 		logger.ERROR("shutdown timeout after", timeout)
 	}
 
-	// 8. 关闭基础设施连接
+	// 9. 关闭基础设施连接
 	if mysql.DB != nil {
 		_ = mysql.DB.Close()
 	}
@@ -260,7 +252,7 @@ func (s *Server) runGlobalTimer() {
 
 // deliverGlobalTimer 全局定时器到期投递：向目标 actor 投递 GlobalFire 包装消息。
 func (s *Server) deliverGlobalTimer(t *timer.GlobalTask) error {
-	return s.ActorManner.Send(t.Target, "timer", &timer.GlobalFire{ID: t.ID, Tag: t.Tag, Payload: t.Payload})
+	return s.ActorManner.Cast(t.Target, "timer", &timer.GlobalFire{ID: t.ID, Tag: t.Tag, Payload: t.Payload})
 }
 
 // gameHeartbeat 周期向 Redis 续期 game 地址。

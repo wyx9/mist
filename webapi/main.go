@@ -14,6 +14,7 @@ import (
 
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/mysql"
+	"simple_game/game/pkg/uid"
 )
 
 // gameSelectCfg 玩家分配 game 节点的策略配置。
@@ -94,6 +95,7 @@ func main() {
 		Password: cfg.Redis.PassWord,
 		DB:       cfg.Redis.DB,
 	})
+	uid.Init(rdb)
 
 	// 解析过期时间
 	tokenExpire, err := time.ParseDuration(cfg.TokenExpire)

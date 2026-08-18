@@ -26,7 +26,7 @@ type AManager struct {
 	mu           sync.RWMutex
 	sched        *timer.Scheduler  // actor 内部内存定时调度器（惰性创建）
 	faultHandler func(name string) // actor 故障回调（handler 超时等），由 gameserver 设置
-	remoteRouter rpc.RemoteRouter   // 跨进程路由（本地未命中时委托），由 gameserver 注入
+	remoteRouter rpc.RemoteRouter  // 跨进程路由（本地未命中时委托），由 gameserver 注入
 	locationReg  LocationRegistry  // 可路由 actor 位置注册，由 gameserver 注入
 	sweeperCtx   context.Context
 	sweeperStop  context.CancelFunc
@@ -305,7 +305,7 @@ func (h *timerHandle) Cancel(task *timer.Task) {
 }
 
 func (h *timerHandle) deliver(msg interface{}) {
-	if err := h.am.Send(h.name, "timer", msg); err != nil {
+	if err := h.am.Cast(h.name, "timer", msg); err != nil {
 		// actor 可能已关闭，属正常竞态，DEBUG 级别即可
 		logger.DEBUG("actor timer deliver failed:", err, "actor:", h.name)
 	}
@@ -367,7 +367,7 @@ func (am *AManager) Attach(name string, conn any) error {
 // 注意：Go 方法不支持类型参数，因此这是包级泛型函数。
 func StartActor[A IActor](am *AManager, name string, actor A) (*ActorBase, error) {
 	// 框架级身份保证：每个 actor 都有全局唯一 uid。
-	// 具体 actor 若实现 ActorID() 且返回非零（如 Player 使用账号 uid），则沿用；否则自动分配雪花 ID。
+	// 具体 actor 若实现 ActorID() 且返回非零（如 Player 使用账号 uid），则沿用；否则自动分配 uid。
 	id := uid.NewUid()
 	if p, ok := any(actor).(interface{ ActorID() int64 }); ok && p.ActorID() != 0 {
 		id = p.ActorID()
@@ -479,14 +479,14 @@ func (am *AManager) Deliver(name string, msg *protocol.Msg) error {
 	return am.deliver(name, &Envelope{From: "server", Kind: MsgClient, Payload: msg})
 }
 
-// Send 向其他 actor 异步投递消息（业务消息，计入活动时间）。
+// Cast 向其他 actor 异步投递消息（业务消息，计入活动时间）。
 // 本地未命中时经跨进程路由转发（透明跨进程）。
-func (am *AManager) Send(to, from string, msg interface{}) error {
+func (am *AManager) Cast(to, from string, msg interface{}) error {
 	if ab := am.Find(to); ab != nil {
 		return am.deliver(to, &Envelope{From: from, Kind: MsgSend, Payload: msg})
 	}
 	if r := am.remoteRouterSnapshot(); r != nil {
-		return r.Send(to, from, msg)
+		return r.Cast(to, from, msg)
 	}
 	return ErrActorNotFound
 }

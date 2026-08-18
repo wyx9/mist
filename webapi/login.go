@@ -88,7 +88,7 @@ func (h *loginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// ensureAccount 查询 name -> uid 映射；不存在则分配雪花 uid 并入库。
+// ensureAccount 查询 name -> uid 映射；不存在则领取全局自增 uid 并入库。
 func ensureAccount(db *sqlx.DB, name string) (int64, error) {
 	var id int64
 	err := db.Get(&id, "SELECT uid FROM accounts WHERE name = ?", name)

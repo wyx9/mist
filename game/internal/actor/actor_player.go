@@ -170,7 +170,7 @@ func (p *Player) notifyRoomLeave() {
 	if p.mgr == nil {
 		return
 	}
-	if err := p.mgr.Send(RoomActorName, p.name, &pt.RoomPlayerLeave{UID: p.uid}); err != nil {
+	if err := p.mgr.Cast(RoomActorName, p.name, &pt.RoomPlayerLeave{UID: p.uid}); err != nil {
 		logger.ERROR("notify room leave failed:", err, "name:", p.name)
 	}
 }
