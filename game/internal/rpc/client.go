@@ -23,8 +23,8 @@ var (
 
 // RemoteRouter 跨进程路由能力：由 rpc.Client 实现，注入 core.AManager。
 type RemoteRouter interface {
-	Call(to, from string, msg interface{}, timeout time.Duration) (interface{}, error)
-	Cast(to, from string, msg interface{}) error
+	Call(to int64, from string, msg interface{}, timeout time.Duration) (interface{}, error)
+	Cast(to int64, from string, msg interface{}) error
 }
 
 // Transport 写帧能力：由 gameserver 注入，负责把 RpcFrame 序列化字节打包为
@@ -87,7 +87,7 @@ func (c *Client) getTransport() Transport {
 }
 
 // Call 远端同步调用：marshal 请求、登记 pending、写帧、阻塞等回包。
-func (c *Client) Call(to, from string, msg interface{}, timeout time.Duration) (interface{}, error) {
+func (c *Client) Call(to int64, from string, msg interface{}, timeout time.Duration) (interface{}, error) {
 	method, err := MethodOf(msg)
 	if err != nil {
 		return nil, err
@@ -108,7 +108,7 @@ func (c *Client) Call(to, from string, msg interface{}, timeout time.Duration) (
 	frame := &pt.RpcFrame{
 		Kind:        pt.RpcKind_RPC_REQUEST,
 		ReqId:       reqID,
-		Target:      to,
+		UID:         to,
 		Method:      method,
 		OriginNode:  c.node,
 		OriginActor: from,
@@ -136,7 +136,7 @@ func (c *Client) Call(to, from string, msg interface{}, timeout time.Duration) (
 }
 
 // Cast 远端异步投递：marshal 请求并写帧，不等回包。
-func (c *Client) Cast(to, from string, msg interface{}) error {
+func (c *Client) Cast(to int64, from string, msg interface{}) error {
 	method, err := MethodOf(msg)
 	if err != nil {
 		return err
@@ -149,7 +149,7 @@ func (c *Client) Cast(to, from string, msg interface{}) error {
 	frame := &pt.RpcFrame{
 		Kind:        pt.RpcKind_RPC_REQUEST,
 		ReqId:       strconv.FormatInt(uid.NewUid(), 10),
-		Target:      to,
+		UID:         to,
 		Method:      method,
 		OriginNode:  c.node,
 		OriginActor: from,

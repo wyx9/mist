@@ -6,19 +6,24 @@ import (
 )
 
 const (
-	PlayerActorName = "player"
-	RoomActorName   = "room"
+	PlayerActorName = "player"  // player 类别名
+	RoomActorName   = "room"    // room 类别名
+	RoomUID         = int64(-1) // 常驻 Room 的保留 uid（Redis INCR 从 1 起，不冲突）
 )
 
-// RegisterAll 统一注册业务 Actor 类别（Player），Server Phase 3 调用。
+// RegisterAll 统一注册业务 Actor 类别与工厂（Server Phase 3 调用）。
+// player 工厂在 gameserver 注册（需 persist store 闭包）；room 工厂在此注册（常驻 daemon）。
 func RegisterAll(am *core.AManager) {
 	am.RegisterCategory(&Player{})
 	am.RegisterCategory(&Room{})
+	_ = am.RegisterFactory(RoomActorName, func(uid int64) (core.IActor, error) {
+		return &Room{}, nil
+	})
 	logger.INFO("actor RegisterAll complete")
 }
 
-// StartDaemonActor 启动常驻的actor
+// StartDaemonActor 启动常驻的 actor（幂等，按需启动）。
 func StartDaemonActor(am *core.AManager) {
-	_, _ = core.StartActor(am, RoomActorName, &Room{})
+	_, _ = am.EnsureRunning(RoomUID, RoomActorName)
 	logger.INFO("room actor started")
 }

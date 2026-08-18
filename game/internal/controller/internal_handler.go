@@ -110,9 +110,9 @@ func LobbyBroadcastHandler(ctx *rpc.HandlerContext[*actor.Player], req *pt.Lobby
 // broadcastLobby 向当前大厅所有玩家逐个投递广播（对齐 skynet 广播模式：
 // 持有接收方列表逐个发消息，全部走跨 actor 消息，不直接操作他人状态）。
 func broadcastLobby(r *actor.Room, comm rpc.Comm, msg *pt.LobbyBroadcast) {
-	for _, name := range r.Players {
-		if err := comm.Cast(name, msg); err != nil {
-			logger.ERROR("lobby broadcast send failed:", err, "to:", name)
+	for uid := range r.Players {
+		if err := comm.Cast(uid, msg); err != nil {
+			logger.ERROR("lobby broadcast send failed:", err, "to:", uid)
 		}
 	}
 }

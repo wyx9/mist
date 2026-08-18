@@ -11,7 +11,7 @@ import (
 // 成功且有响应时通过 actor 的 WriteMessage 能力回包；没有该能力的 actor
 // 仅记录日志并丢弃响应。
 //
-// 新增 actor 无需实现 Handler：通过 AManager.StartActor 启动后，
+// 新增 actor 无需实现 Handler：通过 AManager 工厂/EnsureRunning 启动后，
 // 客户端消息会自动走本入口（ActorBase.clientHandler 委托到本函数）。
 func HandleClientMsg[A any](actor A, actx *ActorContext, msg interface{}) {
 	m, ok := msg.(*protocol.Msg)

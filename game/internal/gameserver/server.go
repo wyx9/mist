@@ -141,6 +141,14 @@ func (s *Server) Start(opts StartOptions) error {
 	}
 	s.persist = persistMgr
 
+	// 注册 player 工厂：按需启动/复活玩家 actor 时使用（闭包捕获持久化句柄）
+	playerStore := s.persist.HandleFor("player")
+	if err := s.ActorManner.RegisterFactory("player", func(uid int64) (core.IActor, error) {
+		return actor.NewPlayer(s.ActorManner, uid, playerStore), nil
+	}); err != nil {
+		return fmt.Errorf("register player factory: %w", err)
+	}
+
 	// Phase 4: 对外服务 (goroutine)
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 
@@ -150,10 +158,11 @@ func (s *Server) Start(opts StartOptions) error {
 		s.regAddr = addr
 	}
 
-	// 内部 RPC 客户端：注入 actor 管理器（远程路由 + 位置注册）
+	// 内部 RPC 客户端：注入 actor 管理器（远程路由 + 位置注册 + 初始化记录）
 	s.rpcClient = rpc.NewClient(s.regAddr)
 	s.ActorManner.SetRemoteRouter(s.rpcClient)
 	s.ActorManner.SetLocationRegistry(&actorLocRegistry{srv: s})
+	s.ActorManner.SetInitRegistry(&actorInitRegistry{srv: s})
 
 	// 全局定时器轮询协程：每秒从 Redis 取到期任务投递给目标 actor
 	s.wg.Add(1)

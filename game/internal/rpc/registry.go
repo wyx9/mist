@@ -14,10 +14,11 @@ type dispatchFunc func(actor any, comm Comm, from string, payload interface{}) (
 // reqType/resType 存结构体类型（如 pt.RoomGetPlayersReq），用于 reflect.New 构造实例；
 // 分发按消息指针类型（*pt.RoomGetPlayersReq）索引，见 add 内的 byType。
 type entry struct {
-	method  string
-	reqType reflect.Type // 请求结构体类型
-	resType reflect.Type // 响应结构体类型；Send 无响应时为 nil
-	invoke  dispatchFunc
+	method   string
+	category string        // 该消息归属的 actor 类别（接收节点据此按需创建/复活 actor）
+	reqType  reflect.Type // 请求结构体类型
+	resType  reflect.Type // 响应结构体类型；Send 无响应时为 nil
+	invoke   dispatchFunc
 }
 
 var (
@@ -25,32 +26,34 @@ var (
 	byMethod = map[string]*entry{}
 )
 
-// Register 注册异步内部消息（Send，无回包）。
-// method 为远端路由标识，如 "room.join"；A 为 actor 具体类型，T 为消息类型。
-func Register[A any, T proto.Message](method string, h func(ctx *HandlerContext[A], req T) error) {
+// Register 注册异步内部消息（Cast，无回包）。
+// method 为远端路由标识，如 "room.join"；category 为归属的 actor 类别（如 "room"）；
+// A 为 actor 具体类型，T 为消息类型。
+func Register[A any, T proto.Message](method, category string, h func(ctx *HandlerContext[A], req T) error) {
 	var zero T
-	add(method, reflect.TypeOf(zero).Elem(), nil, func(actor any, comm Comm, from string, payload interface{}) (interface{}, error) {
+	add(method, category, reflect.TypeOf(zero).Elem(), nil, func(actor any, comm Comm, from string, payload interface{}) (interface{}, error) {
 		hctx := &HandlerContext[A]{Actor: actor.(A), Comm: comm, from: from}
 		return nil, h(hctx, payload.(T))
 	})
 }
 
 // RegisterCall 注册同步内部消息（Call，带回包）。
-// method 为远端路由标识，如 "room.get_players"；R 为响应类型。
-func RegisterCall[A any, T proto.Message, R proto.Message](method string, h func(ctx *HandlerContext[A], req T) (R, error)) {
+// method 为远端路由标识，如 "player.get_info"；category 为归属的 actor 类别（如 "player"）；
+// R 为响应类型。
+func RegisterCall[A any, T proto.Message, R proto.Message](method, category string, h func(ctx *HandlerContext[A], req T) (R, error)) {
 	var zeroReq T
 	var zeroRes R
-	add(method, reflect.TypeOf(zeroReq).Elem(), reflect.TypeOf(zeroRes).Elem(), func(actor any, comm Comm, from string, payload interface{}) (interface{}, error) {
+	add(method, category, reflect.TypeOf(zeroReq).Elem(), reflect.TypeOf(zeroRes).Elem(), func(actor any, comm Comm, from string, payload interface{}) (interface{}, error) {
 		hctx := &HandlerContext[A]{Actor: actor.(A), Comm: comm, from: from}
 		return h(hctx, payload.(T))
 	})
 }
 
-func add(method string, reqType, resType reflect.Type, invoke dispatchFunc) {
+func add(method, category string, reqType, resType reflect.Type, invoke dispatchFunc) {
 	if _, ok := byMethod[method]; ok {
 		panic(fmt.Sprintf("rpc: duplicate method: %s", method))
 	}
-	e := &entry{method: method, reqType: reqType, resType: resType, invoke: invoke}
+	e := &entry{method: method, category: category, reqType: reqType, resType: resType, invoke: invoke}
 	byMethod[method] = e
 	// 分发按消息指针类型索引（reflect.TypeOf(payload) 得到的是 *pt.X）
 	byType[reflect.PtrTo(reqType)] = e

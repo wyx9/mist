@@ -4,6 +4,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -97,10 +98,12 @@ func handleClient(clientConn network.NetConn, rdb *redis.Client, secret []byte) 
 		_ = clientConn.Close()
 		return
 	}
+	// 隧道/会话以 uid 为唯一身份，playerName 仅展示
+	tunnelID := strconv.FormatInt(uid, 10)
 	logger.INFO("client handshake:", clientConn.RemoteAddr(), "player:", playerName, "uid:", uid)
 
 	// 3. 查 Redis 获取目标 game 地址
-	val, err := rdb.Get(rdb.Context(), "player:"+playerName).Result()
+	val, err := rdb.Get(rdb.Context(), "player:"+tunnelID).Result()
 	if err != nil {
 		logger.ERROR("redis get player info failed:", err)
 		_ = clientConn.WriteMessage([]byte(`{"status":"error","detail":"registration expired"}`))
@@ -116,12 +119,12 @@ func handleClient(clientConn network.NetConn, rdb *redis.Client, secret []byte) 
 	logger.INFO("player reg:", playerName, "game:", reg.GameAddr)
 
 	// 4. 异地登录：同玩家已有会话则先踢旧会话
-	if old, ok := sessionMap.Load(playerName); ok {
+	if old, ok := sessionMap.Load(tunnelID); ok {
 		oldSess := old.(*Session)
 		logger.INFO("kick old session (relogin):", playerName)
 		_ = oldSess.ClientConn.Close()
 		if l, ok := gameLinks.Load(oldSess.GameAddr); ok {
-			_ = l.(*gameLink).sendKick(playerName)
+			_ = l.(*gameLink).sendKick(tunnelID)
 		}
 		closeClientSession(oldSess)
 	}
@@ -139,9 +142,9 @@ func handleClient(clientConn network.NetConn, rdb *redis.Client, secret []byte) 
 	// 6. 在长连接上发握手帧并等待 Ack
 	hsData, _ := json.Marshal(&gameHandshakeMsg{PlayerName: playerName, UID: uid, Version: hs.Version})
 	ackCh := make(chan handshakeResult, 1)
-	link.pending.Store(playerName, ackCh)
-	if err := link.writeFrame(codec.TunnelHandshake, playerName, hsData); err != nil {
-		link.pending.Delete(playerName)
+	link.pending.Store(tunnelID, ackCh)
+	if err := link.writeFrame(codec.TunnelHandshake, tunnelID, hsData); err != nil {
+		link.pending.Delete(tunnelID)
 		logger.ERROR("write handshake to game failed:", err)
 		_ = clientConn.Close()
 		return
@@ -150,7 +153,7 @@ func handleClient(clientConn network.NetConn, rdb *redis.Client, secret []byte) 
 	select {
 	case ack = <-ackCh:
 	case <-time.After(handshakeTimeout):
-		link.pending.Delete(playerName)
+		link.pending.Delete(tunnelID)
 		logger.ERROR("handshake to game timeout:", playerName)
 		_ = clientConn.Close()
 		return
@@ -169,16 +172,16 @@ func handleClient(clientConn network.NetConn, rdb *redis.Client, secret []byte) 
 	}
 
 	// 7. 建立 session 并启动转发（game -> client 由 gameLink reader 按隧道回投）
-	sess := &Session{TunnelID: playerName, UID: uid, ClientConn: clientConn, GameAddr: reg.GameAddr}
-	sessionMap.Store(playerName, sess)
-	link.sessions.Store(playerName, sess)
+	sess := &Session{TunnelID: tunnelID, UID: uid, ClientConn: clientConn, GameAddr: reg.GameAddr}
+	sessionMap.Store(tunnelID, sess)
+	link.sessions.Store(tunnelID, sess)
 	logger.INFO("session up:", playerName, "game:", reg.GameAddr)
 	defer func() {
 		logger.INFO("session closed:", playerName)
 		// 只有确认自己仍是当前会话时才通知 game 拆隧道，
 		// 避免旧连接收尾的晚到 kick 误拆重连后新建的隧道
 		if closeClientSession(sess) {
-			_ = link.sendKick(playerName)
+			_ = link.sendKick(tunnelID)
 		}
 	}()
 
@@ -189,7 +192,7 @@ func handleClient(clientConn network.NetConn, rdb *redis.Client, secret []byte) 
 			return
 		}
 		logger.DEBUG("forward client->game:", len(data), "player:", playerName)
-		if err := link.sendData(playerName, data); err != nil {
+		if err := link.sendData(tunnelID, data); err != nil {
 			return
 		}
 	}

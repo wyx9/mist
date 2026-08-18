@@ -9,19 +9,19 @@ import (
 	"simple_game/game/pkg/protocol"
 )
 
-// Deliver 投递客户端消息到 Actor。
-func (s *Server) Deliver(name string, msg *protocol.Msg) error {
-	return s.ActorManner.Deliver(name, msg)
+// Deliver 投递客户端消息到 Actor（目标为 uid）。
+func (s *Server) Deliver(uid int64, msg *protocol.Msg) error {
+	return s.ActorManner.Deliver(uid, msg)
 }
 
-// Cast 向 Actor 异步投递内部消息。
-func (s *Server) Cast(name, from string, msg interface{}) error {
-	return s.ActorManner.Cast(name, from, msg)
+// Cast 向 Actor 异步投递内部消息（目标为 uid）。
+func (s *Server) Cast(uid int64, from string, msg interface{}) error {
+	return s.ActorManner.Cast(uid, from, msg)
 }
 
-// Call 同步调用 Actor（内部 RPC）。
-func (s *Server) Call(name, from string, msg interface{}, timeout time.Duration) (interface{}, error) {
-	return s.ActorManner.Call(name, from, msg, timeout)
+// Call 同步调用 Actor（内部 RPC，目标为 uid）。
+func (s *Server) Call(uid int64, from string, msg interface{}, timeout time.Duration) (interface{}, error) {
+	return s.ActorManner.Call(uid, from, msg, timeout)
 }
 
 // RegisterActor 注册 Actor 到管理器。

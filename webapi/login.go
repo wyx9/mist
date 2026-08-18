@@ -68,7 +68,7 @@ func (h *loginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 写 Redis 注册信息
-	if err := registerPlayer(h.rdb, req.Name, h.gatewayAddr, gameAddr, h.tokenExpire); err != nil {
+	if err := registerPlayer(h.rdb, playerUID, h.gatewayAddr, gameAddr, h.tokenExpire); err != nil {
 		http.Error(w, "register player failed", http.StatusInternalServerError)
 		return
 	}

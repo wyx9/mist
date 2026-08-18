@@ -96,22 +96,29 @@ func newTestClient(t *testing.T, addr string) *rpc.Client {
 }
 
 // TestRemoteCallAndSend 验证跨进程 RPC 的完整收发链路：
-// 客户端 rpc.Client.Call/Send → TCP → 接收侧 rpc.Serve → AManager → 注册的 handler → 回包。
+// 客户端 rpc.Client.Call/Cast → TCP → 接收侧 rpc.Serve → AManager → 注册的 handler → 回包。
 func TestRemoteCallAndSend(t *testing.T) {
+	const echoUID = int64(1001)
+
 	am := &core.AManager{}
-	if _, err := core.StartActor(am, "echo", &testActor{}); err != nil {
-		t.Fatalf("start actor: %v", err)
+	if err := am.RegisterFactory("test", func(uid int64) (core.IActor, error) {
+		return &testActor{}, nil
+	}); err != nil {
+		t.Fatalf("register factory: %v", err)
+	}
+	if _, err := am.EnsureRunning(echoUID, "test"); err != nil {
+		t.Fatalf("ensure actor: %v", err)
 	}
 
 	// 同步（Call）handler
-	rpc.RegisterCall[*testActor, *pt.RoomGetPlayersReq, *pt.RoomGetPlayersRes]("test.echo",
+	rpc.RegisterCall[*testActor, *pt.RoomGetPlayersReq, *pt.RoomGetPlayersRes]("test.echo", "test",
 		func(ctx *rpc.HandlerContext[*testActor], req *pt.RoomGetPlayersReq) (*pt.RoomGetPlayersRes, error) {
 			return &pt.RoomGetPlayersRes{Players: []*pt.RoomPlayerInfo{{UID: 42, Name: "echo"}}}, nil
 		})
 
-	// 异步（Send）handler
+	// 异步（Cast）handler
 	noted := make(chan string, 1)
-	rpc.Register[*testActor, *pt.RoomPlayerJoin]("test.note",
+	rpc.Register[*testActor, *pt.RoomPlayerJoin]("test.note", "test",
 		func(ctx *rpc.HandlerContext[*testActor], req *pt.RoomPlayerJoin) error {
 			noted <- "ok"
 			return nil
@@ -121,7 +128,7 @@ func TestRemoteCallAndSend(t *testing.T) {
 	client := newTestClient(t, addr)
 
 	// 1. 同步远程调用：应拿到类型化响应
-	res, err := client.Call("echo", "client", &pt.RoomGetPlayersReq{}, 3*time.Second)
+	res, err := client.Call(echoUID, "client", &pt.RoomGetPlayersReq{}, 3*time.Second)
 	if err != nil {
 		t.Fatalf("remote call: %v", err)
 	}
@@ -134,7 +141,7 @@ func TestRemoteCallAndSend(t *testing.T) {
 	}
 
 	// 2. 异步远程投递：应触发对端 handler
-	if err := client.Cast("echo", "client", &pt.RoomPlayerJoin{UID: 1, Name: "x"}); err != nil {
+	if err := client.Cast(echoUID, "client", &pt.RoomPlayerJoin{UID: 1, Name: "x"}); err != nil {
 		t.Fatalf("remote cast: %v", err)
 	}
 	select {
@@ -143,13 +150,19 @@ func TestRemoteCallAndSend(t *testing.T) {
 			t.Fatalf("unexpected note: %s", v)
 		}
 	case <-time.After(3 * time.Second):
-		t.Fatal("send handler not invoked")
+		t.Fatal("cast handler not invoked")
 	}
 
-	// 3. 目标 actor 不存在：应收到服务端错误回包（而非超时）
-	if _, err := client.Call("nobody", "client", &pt.RoomGetPlayersReq{}, 2*time.Second); err == nil {
-		t.Fatal("expected error for missing actor, got nil")
+	// 3. 目标从未在本进程初始化过（knownActors 无记录），但方法带类别：
+	//    接收节点应据方法类别自动创建并回包（数据在 Redis、本进程内存无记录的复活场景）
+	if _, err := client.Call(5002, "client", &pt.RoomGetPlayersReq{}, 3*time.Second); err != nil {
+		t.Fatalf("remote call to never-initialized uid should auto-create: %v", err)
+	}
+
+	// 4. 未注册的消息类型：客户端侧 MethodOf 校验失败（而非超时）
+	if _, err := client.Call(1001, "client", &pt.LoginReq{}, 2*time.Second); err == nil {
+		t.Fatal("expected error for unregistered message type, got nil")
 	} else if err == rpc.ErrTimeout {
-		t.Fatal("expected server error, got timeout")
+		t.Fatal("expected client-side validation error, got timeout")
 	}
 }

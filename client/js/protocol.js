@@ -96,7 +96,7 @@ const MSGS = {
   LobbyPlayer: { 1: ['UID', 'varint'], 2: ['Name', 'string'] },
   LobbyJoinPush: { 1: ['Player', 'msg', 'LobbyPlayer'], 2: ['Online', 'varint'] },
   LobbyLeavePush: { 1: ['Player', 'msg', 'LobbyPlayer'], 2: ['Online', 'varint'] },
-  PlayerInfoReq: { 1: ['Name', 'string'] },
+  PlayerInfoReq: { 1: ['UUid', 'varint'] },
   PlayerInfoRes: { 1: ['UUid', 'varint'], 2: ['Name', 'string'], 3: ['Online', 'varint'], 4: ['LastLoginAt', 'varint'] },
 };
 

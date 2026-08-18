@@ -14,7 +14,7 @@ import (
 
 // LobbyController 返回大厅在线玩家快照（经 Room actor RPC 获取，不直接读其状态）。
 func LobbyController(ctx *route.HandlerContext[*actor.Player], req *pt.LobbyInfoReq) (proto.Message, error) {
-	res, err := ctx.Comm.Call(actor.RoomActorName, &pt.RoomGetPlayersReq{}, 5*time.Second)
+	res, err := ctx.Comm.Call(actor.RoomUID, &pt.RoomGetPlayersReq{}, 5*time.Second)
 	if err != nil {
 		logger.ERROR("lobby call room failed:", err)
 		return nil, err

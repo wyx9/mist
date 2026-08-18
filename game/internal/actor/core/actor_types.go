@@ -14,6 +14,9 @@ type IActor interface {
 	Category() string // Actor 类别标识: "player", "npc", "room" 等
 }
 
+// ActorFactory 以 uid 创建某类 actor（展示名等由 Start 加载或调用方后续补齐）。
+type ActorFactory func(uid int64) (IActor, error)
+
 // MessageHandler 可选的内部消息处理器：实现后可通过 Send（异步）与 Call（RPC）接收消息；
 // 未实现时异步消息被丢弃，RPC 自动回复 nil。
 type MessageHandler interface {
@@ -34,22 +37,30 @@ type TimerHandle interface {
 	Cancel(task *timer.Task)                            // 取消
 }
 
-// SetTimerHandle 可选注入接口：StartActor 创建时注入绑定当前 actor 的定时器句柄。
+// SetTimerHandle 可选注入接口：创建时注入绑定当前 actor 的定时器句柄。
 type SetTimerHandle interface {
 	SetTimerHandle(h TimerHandle)
 }
 
 // Routable 标记接口：实现 Routable() bool 且返回 true 的 actor 全局可路由，
-// 创建/关闭时向位置表注册/注销。Player 实现（登录名全局唯一）；
+// 创建/关闭时向位置表注册/注销。Player 实现（uid 全局唯一）；
 // Room 每节点常驻、始终本地，不实现。
 type Routable interface {
 	Routable() bool
 }
 
-// LocationRegistry 位置注册能力：由 gameserver 注入（写入/删除 Redis actor:loc）。
+// LocationRegistry 位置注册能力：由 gameserver 注入（写入/删除 Redis actor:loc，按 uid）。
 type LocationRegistry interface {
-	Register(name string) error
-	Unregister(name string) error
+	Register(uid int64) error
+	Unregister(uid int64) error
+}
+
+// InitRegistry actor 初始化记录能力：由 gameserver 注入（Redis actor:init，uid -> category）。
+// 「该 uid 已初始化过」的判定以此为准，内存 knownActors 只是缓存，进程重启不丢。
+type InitRegistry interface {
+	Register(uid int64, category string) error
+	Unregister(uid int64) error
+	Category(uid int64) (string, bool, error)
 }
 
 // 定义错误常量

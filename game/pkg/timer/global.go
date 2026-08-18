@@ -22,7 +22,7 @@ const (
 // GlobalTask 全局定时任务（Redis 持久化，进程重启后仍生效）。
 type GlobalTask struct {
 	ID      string // 任务唯一 id（为空时自动分配）
-	Target  string // 目标 actor 名
+	Target  int64  // 目标 actor 的 uid
 	DueAt   int64  // 到期 unix 秒
 	Tag     string // 业务标签，供目标 actor 区分任务
 	Payload []byte // 序列化数据（JSON），由业务按 Tag 解码
@@ -40,7 +40,7 @@ type Deliverer func(task *GlobalTask) error
 
 // globalTaskRec Redis 中存储的任务详情。
 type globalTaskRec struct {
-	Target  string `json:"target"`
+	Target  int64  `json:"target"`
 	DueAt   int64  `json:"due_at"`
 	Tag     string `json:"tag"`
 	Payload []byte `json:"payload"`

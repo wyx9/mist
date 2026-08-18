@@ -10,13 +10,17 @@ import (
 // ActorContext 提供给 handler 的执行上下文，支持向其他 actor 发送消息与发起 RPC。
 type ActorContext struct {
 	manager *AManager
-	self    string
+	self    string // 当前 actor 的注册键（uidKey）
+	uid     int64  // 当前 actor 的 uid
 	env     *Envelope
 	replied atomic.Bool
 }
 
-// Name 返回当前 actor 名称。
+// Name 返回当前 actor 名称（uidKey）。
 func (c *ActorContext) Name() string { return c.self }
+
+// SelfUID 返回当前 actor 的 uid。
+func (c *ActorContext) SelfUID() int64 { return c.uid }
 
 // From 返回当前消息来源。
 func (c *ActorContext) From() string {
@@ -35,12 +39,15 @@ func (c *ActorContext) Kind() MsgKind {
 }
 
 // Cast 向其他 actor 异步投递消息。
-func (c *ActorContext) Cast(to string, msg interface{}) error {
+func (c *ActorContext) Cast(to int64, msg interface{}) error {
 	return c.manager.Cast(to, c.self, msg)
 }
 
-// Call 向其他 actor 发起 RPC 并等待回复。
-func (c *ActorContext) Call(to string, msg interface{}, timeout time.Duration) (interface{}, error) {
+// Call 向其他 actor 发起 RPC 并等待回复。禁止自调用（会死锁）。
+func (c *ActorContext) Call(to int64, msg interface{}, timeout time.Duration) (interface{}, error) {
+	if to == c.uid {
+		return nil, ErrSelfCall
+	}
 	return c.manager.Call(to, c.self, msg, timeout)
 }
 

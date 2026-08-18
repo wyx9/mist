@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"strconv"
 	"sync/atomic"
 	"time"
 )
@@ -17,10 +18,10 @@ const (
 
 // ActorBase Actor 基础结构体，提供生命周期状态机与消息队列能力。
 type ActorBase struct {
-	name          string                                   // Actor 名称（注册键）
-	id            int64                                    // 全局唯一 uid（雪花/账号 id），由 StartActor 创建时统一赋值
+	name          string                                   // Actor 注册键 = uid 的十进制字符串
+	id            int64                                    // 全局唯一 uid，由创建时统一赋值
 	iActor        IActor                                   // Actor 接口实现，包含具体的业务逻辑
-	clientHandler func(ctx *ActorContext, msg interface{}) // 客户端消息分发：StartActor 注入，默认走 HandleClientMsg
+	clientHandler func(ctx *ActorContext, msg interface{}) // 客户端消息分发：创建时注入，默认走 HandleClientMsg
 	manager       *AManager                                // Actor 管理器引用，用于内部 RPC 路由
 	request       chan interface{}                         // 请求消息通道，用于接收待处理的消息
 	stop          chan struct{}                            // 停止信号通道：循环退出时关闭，投递方监听避免竞态
@@ -41,6 +42,19 @@ func (ac *ActorBase) ID() int64 {
 // SetID 设置 Actor uid（仅创建阶段调用，须在注册进管理器之前完成）。
 func (ac *ActorBase) SetID(id int64) {
 	atomic.StoreInt64(&ac.id, id)
+}
+
+// wake 唤醒休眠 actor 为运行（EnsureRunning 复用休眠 actor 时调用）。
+func (ac *ActorBase) wake() {
+	for {
+		if ac.state.Load() != int32(StateSleeping) {
+			return
+		}
+		if ac.state.CompareAndSwap(int32(StateSleeping), int32(StateRunning)) {
+			ac.sleepAt.Store(0)
+			return
+		}
+	}
 }
 
 // Actor 返回具体 actor 实例，供框架层做接口断言（如 Persistable）。
@@ -125,11 +139,15 @@ func (ac *ActorBase) markAttached() bool {
 	}
 }
 
-// NewActorBase 创建新的 Actor 实例并启动主循环。
-func NewActorBase(name string, callBack IActor) *ActorBase {
+// uidKey 将 uid 转为 actor 注册键（十进制字符串）。
+func uidKey(uid int64) string { return strconv.FormatInt(uid, 10) }
+
+// NewActorBase 创建新的 Actor 实例并启动主循环。uid 为全局唯一身份，注册键为其十进制字符串。
+func NewActorBase(uid int64, callBack IActor) *ActorBase {
 	ctx, cancel := context.WithCancel(context.Background())
 	ab := &ActorBase{
-		name:    name,
+		name:    uidKey(uid),
+		id:      uid,
 		iActor:  callBack,
 		request: make(chan interface{}, QueueSize),
 		stop:    make(chan struct{}),

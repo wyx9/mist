@@ -26,7 +26,7 @@ message HeartRes {
 
 // PlayerInfoReq 查询指定玩家信息（A 查 B 的跨节点 RPC）。
 message PlayerInfoReq {
-    string Name = 1; // 目标玩家名
+    int64 UUid = 1; // 目标玩家 uid
 }
 
 // PlayerInfoRes 玩家信息快照。

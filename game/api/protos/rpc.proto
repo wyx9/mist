@@ -10,17 +10,17 @@ enum RpcKind {
 }
 
 // RpcFrame 内部跨进程 RPC 信封，承载于 gateway<->game 长连接的 TunnelRPC 隧道帧。
-// gateway 只做路由转发（request 按 target 解析节点、response 按 origin_node 回程），
+// gateway 只做路由转发（request 按 uid 解析节点、response 按 origin_node 回程），
 // 不解析业务 payload。
 message RpcFrame {
   RpcKind Kind        = 1; // 请求 / 响应
-  string  ReqId       = 2; // 关联 id（雪花），请求与响应一致
-  string  Target      = 3; // 目标 actor 名（request 用）
+  string  ReqId       = 2; // 关联 id，请求与响应一致
+  int64   UID         = 3; // 目标 actor 的 uid（request 用）
   string  Method      = 4; // 方法名，路由到注册的 handler（request 用）
   string  OriginNode  = 5; // 来源节点（response 回程路由用）
-  string  OriginActor = 6; // 来源 actor（日志/可选）
+  string  OriginActor = 6; // 来源 actor uid（字符串，日志/可选）
   bytes   Payload     = 7; // 业务消息 protobuf 序列化
   string  Error       = 8; // 错误信息（response 用）
-  bool    IsCall      = 9; // true=Call(需回包) false=Send
+  bool    IsCall      = 9; // true=Call(需回包) false=Cast
   int64   TimeoutMs   = 10; // 调用方超时（毫秒），服务端据此约束本地等待
 }

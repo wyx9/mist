@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -17,8 +18,8 @@ type playerRegInfo struct {
 	GameAddr  string `json:"game_addr"`
 }
 
-// registerPlayer 将玩家信息写入 Redis。
-func registerPlayer(rdb *redis.Client, playerName, gatewayAddr, gameAddr string, ttl time.Duration) error {
+// registerPlayer 将玩家信息写入 Redis（键为 player:{uid}）。
+func registerPlayer(rdb *redis.Client, uid int64, gatewayAddr, gameAddr string, ttl time.Duration) error {
 	info := playerRegInfo{
 		GatewayAddr: gatewayAddr,
 		GameAddr:  gameAddr,
@@ -27,12 +28,12 @@ func registerPlayer(rdb *redis.Client, playerName, gatewayAddr, gameAddr string,
 	if err != nil {
 		return err
 	}
-	return rdb.Set(context.Background(), redisKeyPrefix+playerName, string(data), ttl).Err()
+	return rdb.Set(context.Background(), redisKeyPrefix+strconv.FormatInt(uid, 10), string(data), ttl).Err()
 }
 
-// getPlayerReg 从 Redis 读取玩家注册信息。
-func getPlayerReg(rdb *redis.Client, playerName string) (*playerRegInfo, error) {
-	val, err := rdb.Get(context.Background(), redisKeyPrefix+playerName).Result()
+// getPlayerReg 从 Redis 读取玩家注册信息（键为 player:{uid}）。
+func getPlayerReg(rdb *redis.Client, uid int64) (*playerRegInfo, error) {
+	val, err := rdb.Get(context.Background(), redisKeyPrefix+strconv.FormatInt(uid, 10)).Result()
 	if err != nil {
 		return nil, err
 	}

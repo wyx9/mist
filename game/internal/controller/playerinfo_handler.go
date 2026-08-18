@@ -2,7 +2,6 @@ package controller
 
 import (
 	"errors"
-	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -17,13 +16,12 @@ import (
 // PlayerInfoController 查询指定玩家的信息（客户端入口）。
 // 经 ctx.Comm.Call 透明跨进程：目标玩家在本地则本地调用，在其它节点则经 gateway 路由。
 func PlayerInfoController(ctx *route.HandlerContext[*actor.Player], req *pt.PlayerInfoReq) (proto.Message, error) {
-	target := strings.TrimSpace(req.Name)
-	if target == "" {
-		return nil, errors.New("target player name is empty")
+	if req.UUid <= 0 {
+		return nil, errors.New("target player uid is empty")
 	}
-	res, err := ctx.Comm.Call(target, &pt.PlayerInfoReq{}, 5*time.Second)
+	res, err := ctx.Comm.Call(req.UUid, &pt.PlayerInfoReq{}, 5*time.Second)
 	if err != nil {
-		logger.ERROR("get player info failed:", err, "target:", target)
+		logger.ERROR("get player info failed:", err, "target:", req.UUid)
 		return nil, err
 	}
 	info, ok := res.(*pt.PlayerInfoRes)

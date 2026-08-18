@@ -4,6 +4,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -166,15 +168,15 @@ func (l *gameLink) handleRPC(payload []byte) {
 	}
 }
 
-// routeRequest 解析目标 actor 所在节点并转发请求；失败时回错误响应。
+// routeRequest 解析目标 actor（按 uid）所在节点并转发请求；失败时回错误响应。
 func (l *gameLink) routeRequest(frame *pt.RpcFrame) {
-	addr, found, err := registry.ResolveActorLoc(context.Background(), l.rdb, frame.Target)
+	addr, found, err := registry.ResolveActorLoc(context.Background(), l.rdb, frame.UID)
 	if err != nil {
 		l.replyError(frame, "resolve actor location: "+err.Error())
 		return
 	}
 	if !found {
-		l.replyError(frame, "actor not found: "+frame.Target)
+		l.replyError(frame, fmt.Sprintf("actor not found: uid=%d", frame.UID))
 		return
 	}
 	target, ok := gameLinks.Load(addr)
@@ -211,14 +213,14 @@ func (l *gameLink) writeRPC(frame *pt.RpcFrame) error {
 // replyError 对失败的请求回错误响应（仅 Call 需要回包）。
 func (l *gameLink) replyError(frame *pt.RpcFrame, msg string) {
 	if !frame.IsCall {
-		logger.ERROR("gateway rpc request failed:", msg, "target:", frame.Target)
+		logger.ERROR("gateway rpc request failed:", msg, "uid:", frame.UID)
 		return
 	}
 	resp := &pt.RpcFrame{
 		Kind:        pt.RpcKind_RPC_RESPONSE,
 		ReqId:       frame.ReqId,
 		OriginNode:  frame.OriginNode,
-		OriginActor: frame.Target,
+		OriginActor: strconv.FormatInt(frame.UID, 10),
 		Error:       msg,
 	}
 	target, ok := gameLinks.Load(frame.OriginNode)

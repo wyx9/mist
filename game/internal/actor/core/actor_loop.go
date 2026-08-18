@@ -44,6 +44,7 @@ func (ac *ActorBase) handleEnvelope(env *Envelope) {
 	ctx := &ActorContext{
 		manager: ac.manager,
 		self:    ac.name,
+		uid:     ac.id,
 		env:     env,
 	}
 
@@ -81,7 +82,7 @@ func (ac *ActorBase) handleEnvelope(env *Envelope) {
 }
 
 // dispatch 按消息类型分发：
-//   - MsgClient：走 StartActor 注入的 clientHandler（默认 HandleClientMsg）；
+//   - MsgClient：走创建时注入的 clientHandler（默认 HandleClientMsg）；
 //   - MsgSend / MsgCall：优先走内部消息注册表（rpc.Dispatch，业务消息在 controller 层注册），
 //     未注册时回退到 actor 的 MessageHandler（框架生命周期消息 PersistTick/ConnDetached 等）。
 func (ac *ActorBase) dispatch(env *Envelope, ctx *ActorContext) {

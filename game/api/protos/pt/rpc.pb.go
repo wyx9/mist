@@ -69,19 +69,19 @@ func (RpcKind) EnumDescriptor() ([]byte, []int) {
 }
 
 // RpcFrame 内部跨进程 RPC 信封，承载于 gateway<->game 长连接的 TunnelRPC 隧道帧。
-// gateway 只做路由转发（request 按 target 解析节点、response 按 origin_node 回程），
+// gateway 只做路由转发（request 按 uid 解析节点、response 按 origin_node 回程），
 // 不解析业务 payload。
 type RpcFrame struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Kind          RpcKind                `protobuf:"varint,1,opt,name=Kind,proto3,enum=main.RpcKind" json:"Kind,omitempty"` // 请求 / 响应
-	ReqId         string                 `protobuf:"bytes,2,opt,name=ReqId,proto3" json:"ReqId,omitempty"`                  // 关联 id（雪花），请求与响应一致
-	Target        string                 `protobuf:"bytes,3,opt,name=Target,proto3" json:"Target,omitempty"`                // 目标 actor 名（request 用）
+	ReqId         string                 `protobuf:"bytes,2,opt,name=ReqId,proto3" json:"ReqId,omitempty"`                  // 关联 id，请求与响应一致
+	UID           int64                  `protobuf:"varint,3,opt,name=UID,proto3" json:"UID,omitempty"`                     // 目标 actor 的 uid（request 用）
 	Method        string                 `protobuf:"bytes,4,opt,name=Method,proto3" json:"Method,omitempty"`                // 方法名，路由到注册的 handler（request 用）
 	OriginNode    string                 `protobuf:"bytes,5,opt,name=OriginNode,proto3" json:"OriginNode,omitempty"`        // 来源节点（response 回程路由用）
-	OriginActor   string                 `protobuf:"bytes,6,opt,name=OriginActor,proto3" json:"OriginActor,omitempty"`      // 来源 actor（日志/可选）
+	OriginActor   string                 `protobuf:"bytes,6,opt,name=OriginActor,proto3" json:"OriginActor,omitempty"`      // 来源 actor uid（字符串，日志/可选）
 	Payload       []byte                 `protobuf:"bytes,7,opt,name=Payload,proto3" json:"Payload,omitempty"`              // 业务消息 protobuf 序列化
 	Error         string                 `protobuf:"bytes,8,opt,name=Error,proto3" json:"Error,omitempty"`                  // 错误信息（response 用）
-	IsCall        bool                   `protobuf:"varint,9,opt,name=IsCall,proto3" json:"IsCall,omitempty"`               // true=Call(需回包) false=Send
+	IsCall        bool                   `protobuf:"varint,9,opt,name=IsCall,proto3" json:"IsCall,omitempty"`               // true=Call(需回包) false=Cast
 	TimeoutMs     int64                  `protobuf:"varint,10,opt,name=TimeoutMs,proto3" json:"TimeoutMs,omitempty"`        // 调用方超时（毫秒），服务端据此约束本地等待
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -131,11 +131,11 @@ func (x *RpcFrame) GetReqId() string {
 	return ""
 }
 
-func (x *RpcFrame) GetTarget() string {
+func (x *RpcFrame) GetUID() int64 {
 	if x != nil {
-		return x.Target
+		return x.UID
 	}
-	return ""
+	return 0
 }
 
 func (x *RpcFrame) GetMethod() string {
@@ -191,11 +191,11 @@ var File_rpc_proto protoreflect.FileDescriptor
 
 const file_rpc_proto_rawDesc = "" +
 	"\n" +
-	"\trpc.proto\x12\x04main\"\x9b\x02\n" +
+	"\trpc.proto\x12\x04main\"\x95\x02\n" +
 	"\bRpcFrame\x12!\n" +
 	"\x04Kind\x18\x01 \x01(\x0e2\r.main.RpcKindR\x04Kind\x12\x14\n" +
-	"\x05ReqId\x18\x02 \x01(\tR\x05ReqId\x12\x16\n" +
-	"\x06Target\x18\x03 \x01(\tR\x06Target\x12\x16\n" +
+	"\x05ReqId\x18\x02 \x01(\tR\x05ReqId\x12\x10\n" +
+	"\x03UID\x18\x03 \x01(\x03R\x03UID\x12\x16\n" +
 	"\x06Method\x18\x04 \x01(\tR\x06Method\x12\x1e\n" +
 	"\n" +
 	"OriginNode\x18\x05 \x01(\tR\n" +

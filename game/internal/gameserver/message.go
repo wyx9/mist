@@ -12,6 +12,10 @@ import (
 // 同一 tunnel 的帧由单条连接的读协程序序处理，actor 队列自身保证串行有序；
 // Deliver 仅在 actor 队列满时阻塞（背压），符合流量控制语义。
 func (s *Server) handleMsg(msg []byte, tunnelID string) error {
+	uid, ok := tunnelUID(tunnelID)
+	if !ok {
+		return fmt.Errorf("invalid tunnel uid: %s", tunnelID)
+	}
 	m, err := protocol.DecodeMsg(msg)
 	if err != nil {
 		return err
@@ -19,8 +23,8 @@ func (s *Server) handleMsg(msg []byte, tunnelID string) error {
 	if err := s.authorizeMsg(tunnelID, m); err != nil {
 		return err
 	}
-	if err := s.Deliver(tunnelID, m); err != nil {
-		logger.ERROR("Deliver error:", err, "tunnelID:", tunnelID)
+	if err := s.Deliver(uid, m); err != nil {
+		logger.ERROR("Deliver error:", err, "uid:", uid)
 	}
 	return nil
 }

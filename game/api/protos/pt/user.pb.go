@@ -216,7 +216,7 @@ func (x *HeartRes) GetTime() int64 {
 // PlayerInfoReq 查询指定玩家信息（A 查 B 的跨节点 RPC）。
 type PlayerInfoReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=Name,proto3" json:"Name,omitempty"` // 目标玩家名
+	UUid          int64                  `protobuf:"varint,1,opt,name=UUid,proto3" json:"UUid,omitempty"` // 目标玩家 uid
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -251,11 +251,11 @@ func (*PlayerInfoReq) Descriptor() ([]byte, []int) {
 	return file_user_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *PlayerInfoReq) GetName() string {
+func (x *PlayerInfoReq) GetUUid() int64 {
 	if x != nil {
-		return x.Name
+		return x.UUid
 	}
-	return ""
+	return 0
 }
 
 // PlayerInfoRes 玩家信息快照。
@@ -345,7 +345,7 @@ const file_user_proto_rawDesc = "" +
 	"\bHeartRes\x12\x12\n" +
 	"\x04Time\x18\x01 \x01(\x03R\x04Time\"#\n" +
 	"\rPlayerInfoReq\x12\x12\n" +
-	"\x04Name\x18\x01 \x01(\tR\x04Name\"q\n" +
+	"\x04UUid\x18\x01 \x01(\x03R\x04UUid\"q\n" +
 	"\rPlayerInfoRes\x12\x12\n" +
 	"\x04UUid\x18\x01 \x01(\x03R\x04UUid\x12\x12\n" +
 	"\x04Name\x18\x02 \x01(\tR\x04Name\x12\x16\n" +

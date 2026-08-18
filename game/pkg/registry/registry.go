@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -13,6 +14,7 @@ const (
 	ServerSetKey      = "game:servers"
 	alivePrefix       = "game:alive:"
 	actorLocPrefix    = "actor:loc:"
+	actorInitPrefix   = "actor:init:"
 	AliveTTL          = 10 * time.Second
 	HeartbeatInterval = 5 * time.Second
 )
@@ -58,25 +60,25 @@ func ListFresh(ctx context.Context, rdb *redis.Client) ([]string, error) {
 	return fresh, nil
 }
 
-// ActorLocKey 返回 actor 位置表 key：actor:loc:{actorName} -> 节点 addr。
-func ActorLocKey(name string) string {
-	return actorLocPrefix + name
+// ActorLocKey 返回 actor 位置表 key：actor:loc:{uid} -> 节点 addr。
+func ActorLocKey(uid int64) string {
+	return actorLocPrefix + strconv.FormatInt(uid, 10)
 }
 
-// RegisterActorLoc 写入（或覆盖）某个 actor 的位置：actor:loc:{name} = addr。
+// RegisterActorLoc 写入（或覆盖）某个 actor 的位置：actor:loc:{uid} = addr。
 // 由 game 在创建可路由 actor 时调用。
-func RegisterActorLoc(ctx context.Context, rdb *redis.Client, name, addr string) error {
-	return rdb.Set(ctx, ActorLocKey(name), addr, 0).Err()
+func RegisterActorLoc(ctx context.Context, rdb *redis.Client, uid int64, addr string) error {
+	return rdb.Set(ctx, ActorLocKey(uid), addr, 0).Err()
 }
 
-// UnregisterActorLoc 删除某个 actor 的位置记录。由 game 在关闭可路由 actor 时调用。
-func UnregisterActorLoc(ctx context.Context, rdb *redis.Client, name string) error {
-	return rdb.Del(ctx, ActorLocKey(name)).Err()
+// UnregisterActorLoc 删除某个 actor 的位置记录。由 game 在彻底删除可路由 actor 时调用。
+func UnregisterActorLoc(ctx context.Context, rdb *redis.Client, uid int64) error {
+	return rdb.Del(ctx, ActorLocKey(uid)).Err()
 }
 
 // ResolveActorLoc 解析 actor 所在节点；未注册返回 found=false。
-func ResolveActorLoc(ctx context.Context, rdb *redis.Client, name string) (addr string, found bool, err error) {
-	val, err := rdb.Get(ctx, ActorLocKey(name)).Result()
+func ResolveActorLoc(ctx context.Context, rdb *redis.Client, uid int64) (addr string, found bool, err error) {
+	val, err := rdb.Get(ctx, ActorLocKey(uid)).Result()
 	if err == redis.Nil {
 		return "", false, nil
 	}
@@ -105,4 +107,31 @@ func SweepActorLoc(ctx context.Context, rdb *redis.Client, addr string) {
 			return
 		}
 	}
+}
+
+// ActorInitKey 返回 actor 初始化记录 key：actor:init:{uid} -> category。
+func ActorInitKey(uid int64) string {
+	return actorInitPrefix + strconv.FormatInt(uid, 10)
+}
+
+// RegisterActorInit 记录某 uid 已初始化及其类别（actor 首次创建时写入，长期保留，供按需复活）。
+func RegisterActorInit(ctx context.Context, rdb *redis.Client, uid int64, category string) error {
+	return rdb.Set(ctx, ActorInitKey(uid), category, 0).Err()
+}
+
+// UnregisterActorInit 删除初始化记录（彻底删除 actor 时用）。
+func UnregisterActorInit(ctx context.Context, rdb *redis.Client, uid int64) error {
+	return rdb.Del(ctx, ActorInitKey(uid)).Err()
+}
+
+// ActorCategory 查询某 uid 的类别；未初始化返回 found=false。
+func ActorCategory(ctx context.Context, rdb *redis.Client, uid int64) (category string, found bool, err error) {
+	val, err := rdb.Get(ctx, ActorInitKey(uid)).Result()
+	if err == redis.Nil {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return val, true, nil
 }

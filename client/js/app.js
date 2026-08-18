@@ -230,8 +230,15 @@ function queryPlayer() {
   const name = input.value.trim();
   if (!name) { toast('请输入要查询的玩家名'); return; }
 
+  // 由玩家列表解析 name -> uid（身份为 uid）
+  let targetUID = null;
+  for (const p of state.players.values()) {
+    if (p.name === name) { targetUID = p.uid; break; }
+  }
+  if (targetUID === null) { toast('未找到在线玩家：' + name); return; }
+
   $('btnQueryPlayer').disabled = true;
-  ws.sendReq(11, 'PlayerInfoReq', { Name: name }, { uid: state.uid, timeoutMs: 8000 })
+  ws.sendReq(11, 'PlayerInfoReq', { UUid: targetUID }, { uid: state.uid, timeoutMs: 8000 })
     .then((res) => {
       const d = new Date(Number(res.LastLoginAt) * 1000);
       $('playerQueryResult').textContent =

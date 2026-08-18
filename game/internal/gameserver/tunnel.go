@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,6 +18,12 @@ import (
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/network"
 )
+
+// tunnelUID 解析隧道 id（uid 的十进制字符串）为 uid。
+func tunnelUID(tunnelID string) (int64, bool) {
+	uid, err := strconv.ParseInt(tunnelID, 10, 64)
+	return uid, err == nil && uid > 0
+}
 
 // gatewayLink gateway 长连接：一条连接上多路复用多个玩家隧道。
 type gatewayLink struct {
@@ -177,57 +184,50 @@ func (s *Server) handleTunnelHandshake(link *gatewayLink, tunnelID string, paylo
 	if err := json.Unmarshal(payload, hs); err != nil {
 		return s.ackHandshake(link, tunnelID, false, "invalid handshake payload")
 	}
+	uid, ok := tunnelUID(tunnelID)
+	if !ok || (hs.UID != 0 && hs.UID != uid) {
+		return s.ackHandshake(link, tunnelID, false, "invalid tunnel uid")
+	}
 	playerName := hs.PlayerName
-	if playerName == "" || playerName != tunnelID {
-		return s.ackHandshake(link, tunnelID, false, "invalid player_name")
-	}
-	uid := hs.UID
-	if uid == 0 {
-		logger.WARNING("handshake without uid, player:", playerName)
-	}
 
-	// 复用策略：休眠中重连直接 Attach（不重建、不重载）；在线顶替关旧建新；不存在则新建。
-	ab := s.ActorManner.Find(tunnelID)
+	// 复用策略：休眠中重连直接 Attach（不重建、不重载）；在线顶替关旧建新；不存在则新建/复活。
+	ab := s.ActorManner.Find(uid)
 	reuse := ab != nil && !ab.Attached()
 	if ab != nil && ab.Attached() {
-		logger.INFO("replacing online actor (relogin):", tunnelID)
+		logger.INFO("replacing online actor (relogin), uid:", uid)
 		if old, ok := s.tunnels.Load(tunnelID); ok {
 			s.closeTunnel(tunnelID, old.(*TunnelConn))
 		} else {
-			_ = s.ActorManner.CloseActor(tunnelID, 5*time.Second)
+			_ = s.ActorManner.CloseActor(uid, 5*time.Second)
 		}
 	}
-	if reuse && uid != 0 && uid != ab.ID() {
+	if reuse && ab.ID() != uid {
 		// 身份不一致（正常情况不会发生），硬关闭后重建，避免数据错绑
-		logger.ERROR("reattach uid mismatch, rebuild actor, player:", tunnelID)
-		_ = s.ActorManner.CloseActor(tunnelID, 5*time.Second)
+		logger.ERROR("reattach uid mismatch, rebuild actor, uid:", uid)
+		_ = s.ActorManner.CloseActor(uid, 5*time.Second)
 		reuse = false
 	}
 
 	tc := &TunnelConn{link: link, tunnelID: tunnelID, remote: link.conn.RemoteAddr()}
 	s.uidByTunnel.Store(tunnelID, uid)
-	var store core.PersistStore
-	if s.persist != nil {
-		store = s.persist.HandleFor("player")
-	}
 	if reuse {
-		if err := s.ActorManner.Attach(tunnelID, tc); err != nil {
-			logger.ERROR("reattach actor failed, create new instead:", err, "tunnel:", tunnelID)
+		if err := s.ActorManner.Attach(uid, tc); err != nil {
+			logger.ERROR("reattach actor failed, create new instead:", err, "uid:", uid)
 			reuse = false
 		}
 	}
 	if !reuse {
-		// 先清理可能残留的同名旧 actor，再新建
-		if err := s.ActorManner.CloseActor(tunnelID, 5*time.Second); err != nil &&
-			!errors.Is(err, core.ErrActorNotFound) && !errors.Is(err, core.ErrActorClose) {
-			logger.WARNING("close stale actor before handshake:", err, "tunnel:", tunnelID)
-		}
-		if _, err := actor.StartPlayer(s.ActorManner, tunnelID, uid, store); err != nil {
+		// 按需启动：未初始化→工厂新建；已回收→复活重载；name 由握手补齐（新建时）
+		ab, err := s.ActorManner.EnsureRunning(uid, "player")
+		if err != nil {
 			s.uidByTunnel.Delete(tunnelID)
 			return s.ackHandshake(link, tunnelID, false, err.Error())
 		}
-		if err := s.ActorManner.Attach(tunnelID, tc); err != nil {
-			logger.ERROR("attach new actor failed:", err, "tunnel:", tunnelID)
+		if p, ok := ab.Actor().(*actor.Player); ok {
+			p.SetName(playerName)
+		}
+		if err := s.ActorManner.Attach(uid, tc); err != nil {
+			logger.ERROR("attach new actor failed:", err, "uid:", uid)
 		}
 	}
 	s.tunnels.Store(tunnelID, tc)
@@ -247,7 +247,9 @@ func (s *Server) ackHandshake(link *gatewayLink, tunnelID string, ok bool, errMs
 // closeTunnel 硬关闭指定隧道：关 actor、删全局与所属 link 索引，并通知 gateway 关闭客户端连接。
 // 用于故障踢线等需要立即销毁 actor 的路径。
 func (s *Server) closeTunnel(tunnelID string, tc *TunnelConn) {
-	_ = s.ActorManner.CloseActor(tunnelID, 5*time.Second)
+	if uid, ok := tunnelUID(tunnelID); ok {
+		_ = s.ActorManner.CloseActor(uid, 5*time.Second)
+	}
 	tc.Close()
 	s.tunnels.Delete(tunnelID)
 	if tc.link != nil {
@@ -266,9 +268,11 @@ func (s *Server) detachTunnel(tunnelID string, tc *TunnelConn) {
 		tc.link.tunnels.Delete(tunnelID)
 	}
 	s.uidByTunnel.Delete(tunnelID)
-	if err := s.ActorManner.Detach(tunnelID); err != nil &&
-		!errors.Is(err, core.ErrActorNotFound) && !errors.Is(err, core.ErrActorClose) {
-		logger.ERROR("detach actor error:", err, "tunnel:", tunnelID)
+	if uid, ok := tunnelUID(tunnelID); ok {
+		if err := s.ActorManner.Detach(uid); err != nil &&
+			!errors.Is(err, core.ErrActorNotFound) && !errors.Is(err, core.ErrActorClose) {
+			logger.ERROR("detach actor error:", err, "uid:", uid)
+		}
 	}
 }
 

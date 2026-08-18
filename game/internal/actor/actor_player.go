@@ -2,6 +2,7 @@ package actor
 
 import (
 	"errors"
+	"strconv"
 	"time"
 
 	"simple_game/game/api/protos/pt"
@@ -13,7 +14,7 @@ import (
 
 // Player 玩家业务 Actor，实现 core.IActor / core.Persistable / core.MessageHandler / core.IdleTimeoutProvider。
 type Player struct {
-	name       string             // 玩家名（登录名，路由名）
+	name       string             // 玩家名（仅展示；uid 才是身份，加载/登录时同步）
 	uid        int64              // 玩家全局唯一 id（持久化主键，来自账号体系）
 	ip         string             // 玩家 IP 地址
 	conn       network.NetConn    // 网络连接（协议无关；休眠时为空，重连经 ConnAttached 换绑）
@@ -24,24 +25,24 @@ type Player struct {
 	PlayerData *entity.PlayerData // 玩家数据
 }
 
-// StartPlayer 创建并启动玩家 Actor，注册到管理器。
+// NewPlayer 构造玩家 actor（uid 为身份；name 由 Start 加载持久化或登录路径 SetName 补齐）。
 // 连接不在创建时注入：由握手完成 Attach 后经 ConnAttached 消息换绑，保证 actor 串行。
-func StartPlayer(am *core.AManager, name string, uid int64, store core.PersistStore) (*Player, error) {
-	playerActor := &Player{
-		name:  name,
+func NewPlayer(am *core.AManager, uid int64, store core.PersistStore) *Player {
+	return &Player{
 		uid:   uid,
 		store: store,
 		mgr:   am,
 		PlayerData: &entity.PlayerData{
 			UID:         uid,
-			Name:        name,
 			LastLoginAt: time.Now().Unix(),
 		},
 	}
-	if _, err := core.StartActor(am, name, playerActor); err != nil {
-		return nil, err
-	}
-	return playerActor, nil
+}
+
+// SetName 设置玩家展示名（新玩家登录时由握手帧补齐）。
+func (p *Player) SetName(name string) {
+	p.name = name
+	p.PlayerData.Name = name
 }
 
 // Start 玩家 Actor 启动时加载数据（Redis -> MySQL -> 默认值）。
@@ -132,15 +133,16 @@ func (p *Player) loadPlayer() {
 	}
 	found, err := p.store.Load(p.uid, p.PlayerData)
 	if err != nil {
-		logger.ERROR("player load failed:", err, "name:", p.name)
+		logger.ERROR("player load failed:", err, "uid:", p.uid)
 		return
 	}
 	if !found {
 		p.dirty = true
-		logger.INFO("player no persisted data, use default:", p.name)
+		logger.INFO("player no persisted data, use default, uid:", p.uid)
 		return
 	}
-	logger.INFO("player data loaded:", p.name)
+	p.name = p.PlayerData.Name // 同步展示名
+	logger.INFO("player data loaded, uid:", p.uid)
 }
 
 // flushNow 无条件落地玩家数据（actor 退出/停机兜底）。
@@ -170,8 +172,8 @@ func (p *Player) notifyRoomLeave() {
 	if p.mgr == nil {
 		return
 	}
-	if err := p.mgr.Cast(RoomActorName, p.name, &pt.RoomPlayerLeave{UID: p.uid}); err != nil {
-		logger.ERROR("notify room leave failed:", err, "name:", p.name)
+	if err := p.mgr.Cast(RoomUID, strconv.FormatInt(p.uid, 10), &pt.RoomPlayerLeave{UID: p.uid}); err != nil {
+		logger.ERROR("notify room leave failed:", err, "uid:", p.uid)
 	}
 }
 

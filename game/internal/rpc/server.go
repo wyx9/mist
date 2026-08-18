@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -10,13 +11,15 @@ import (
 )
 
 // LocalCaller 本地投递能力：由 core.AManager 实现（CallLocal/SendLocal，不带远程回退）。
+// category 为消息归属的 actor 类别：目标未运行且本地无记录时据此按需创建/复活。
 type LocalCaller interface {
-	CallLocal(to, from string, msg interface{}, timeout time.Duration) (interface{}, error)
-	SendLocal(to, from string, msg interface{}) error
+	CallLocal(to int64, category string, from string, msg interface{}, timeout time.Duration) (interface{}, error)
+	SendLocal(to int64, category string, from string, msg interface{}) error
 }
 
-// Serve 处理一个到达本节点的 RpcFrame（接收侧入口，须在统一 worker 内调用）。
-// 按 method 反查 handler、反序列化请求、本地投递到目标 actor；
+// Serve 处理一个到达本节点的 RpcFrame（接收侧入口）。
+// 按 method 反查 handler（含 category）、反序列化请求、本地投递到目标 actor；
+// 目标未运行/本地无记录时用 category 按需创建（Start 内从 Redis 重载数据）；
 // IsCall=true 时通过 reply 回写 RPC_RESPONSE。
 func Serve(local LocalCaller, frame *pt.RpcFrame, reply func(*pt.RpcFrame) error) error {
 	e, err := lookup(frame.Method)
@@ -29,7 +32,7 @@ func Serve(local LocalCaller, frame *pt.RpcFrame, reply func(*pt.RpcFrame) error
 	}
 
 	if !frame.IsCall {
-		if err := local.SendLocal(frame.Target, frame.OriginActor, req); err != nil {
+		if err := local.SendLocal(frame.UID, e.category, frame.OriginActor, req); err != nil {
 			return fmt.Errorf("rpc: send local: %w", err)
 		}
 		return nil
@@ -43,9 +46,9 @@ func Serve(local LocalCaller, frame *pt.RpcFrame, reply func(*pt.RpcFrame) error
 		Kind:        pt.RpcKind_RPC_RESPONSE,
 		ReqId:       frame.ReqId,
 		OriginNode:  frame.OriginNode,
-		OriginActor: frame.Target,
+		OriginActor: strconv.FormatInt(frame.UID, 10),
 	}
-	res, err := local.CallLocal(frame.Target, frame.OriginActor, req, timeout)
+	res, err := local.CallLocal(frame.UID, e.category, frame.OriginActor, req, timeout)
 	if err != nil {
 		resp.Error = err.Error()
 	} else if res != nil {
