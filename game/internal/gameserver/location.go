@@ -54,13 +54,14 @@ func (s *Server) claimActorLoc(uid int64) error {
 }
 
 // isLocalOwner 判断 uid 的位置是否归属本节点；无记录视为可认领（返回 true）。
-// 查询失败时保守视为本节点（不做破坏性操作），由后续创建路径的原子认领兜底。
+// 复用 actorLocRegistry.IsOwner 同一实现；查询失败时保守视为本节点（不做破坏性操作），
+// 由后续创建路径的原子认领兜底。
 func (s *Server) isLocalOwner(uid int64) bool {
-	node, found, err := registry.ResolveActorLoc(context.Background(), redis.RedisClient, uid)
-	if err != nil || !found {
+	owner, err := (&actorLocRegistry{srv: s}).IsOwner(uid)
+	if err != nil {
 		return true
 	}
-	return node == s.regAddr
+	return owner
 }
 
 // actorInitRegistry 实现 core.InitRegistry：actor 初始化记录（uid→category）持久化到 Redis。

@@ -26,10 +26,10 @@ func tunnelUID(tunnelID string) (int64, bool) {
 }
 
 // gatewayLink gateway 长连接：一条连接上多路复用多个玩家隧道。
+// 隧道统一登记在 Server.tunnels（全局表，TunnelConn 持有 link 引用），此处无独立索引。
 type gatewayLink struct {
 	conn    network.NetConn
 	writeMu sync.Mutex
-	tunnels sync.Map // tunnelID -> *TunnelConn
 }
 
 func (l *gatewayLink) writeFrame(typ byte, tunnelID string, data []byte) error {
@@ -104,8 +104,11 @@ func (s *Server) handleGatewayLink(link *gatewayLink) {
 	}
 	// 长连接断开：其上所有玩家隧道进入休眠（actor 保留，等待重连复用）
 	logger.INFO("gateway link closed, detach tunnels")
-	link.tunnels.Range(func(key, value interface{}) bool {
-		s.detachTunnel(key.(string), value.(*TunnelConn))
+	s.tunnels.Range(func(key, value interface{}) bool {
+		tc := value.(*TunnelConn)
+		if tc.link == link {
+			s.detachTunnel(key.(string), tc)
+		}
 		return true
 	})
 	s.links.Delete(link)
@@ -120,15 +123,31 @@ func (s *Server) handleTunnelFrame(link *gatewayLink, data []byte) error {
 	case codec.TunnelHandshake:
 		return s.handleTunnelHandshake(link, tunnelID, payload)
 	case codec.TunnelData:
-		if _, ok := link.tunnels.Load(tunnelID); !ok {
+		if _, ok := s.tunnels.Load(tunnelID); !ok {
 			return fmt.Errorf("unknown tunnel: %s", tunnelID)
 		}
 		if err := s.handleMsg(payload, tunnelID); err != nil {
-			logger.ERROR("handleMsg error:", err, "tunnel:", tunnelID)
+			switch {
+			case errors.Is(err, core.ErrActorNotFound):
+				// actor 不存在 = 会话状态失效：清理隧道（通知 gateway 踢连接），WARNING 级
+				logger.WARNING("actor not found, detach tunnel:", tunnelID, "err:", err)
+				if tc, ok := s.tunnels.Load(tunnelID); ok {
+					s.detachTunnel(tunnelID, tc.(*TunnelConn))
+				}
+				return nil
+			case errors.Is(err, core.ErrActorClose):
+				// actor 关闭竞态：丢弃该消息，连接视为正常
+				logger.WARNING("actor closing, drop message, tunnel:", tunnelID)
+				return nil
+			default:
+				// 其余错误（帧/消息解析失败、uid 策略、投递其他错误）统一上抛，
+				// 由 handleGatewayLink 记一条 ERROR（错误日志唯一出口）
+				return err
+			}
 		}
 		return nil
 	case codec.TunnelKick:
-		if tc, ok := link.tunnels.Load(tunnelID); ok {
+		if tc, ok := s.tunnels.Load(tunnelID); ok {
 			s.detachTunnel(tunnelID, tc.(*TunnelConn))
 		}
 		return nil
@@ -215,7 +234,6 @@ func (s *Server) handleTunnelHandshake(link *gatewayLink, tunnelID string, paylo
 	}
 
 	tc := &TunnelConn{link: link, tunnelID: tunnelID, remote: link.conn.RemoteAddr()}
-	s.uidByTunnel.Store(tunnelID, uid)
 	if reuse {
 		if err := s.ActorManner.Attach(uid, tc); err != nil {
 			logger.ERROR("reattach actor failed, create new instead:", err, "uid:", uid)
@@ -229,7 +247,6 @@ func (s *Server) handleTunnelHandshake(link *gatewayLink, tunnelID string, paylo
 		}
 		ab, err := s.ActorManner.EnsureRunning(uid, "player")
 		if err != nil {
-			s.uidByTunnel.Delete(tunnelID)
 			return s.ackHandshake(link, tunnelID, false, err.Error())
 		}
 		if p, ok := ab.Actor().(*actor.Player); ok {
@@ -240,7 +257,6 @@ func (s *Server) handleTunnelHandshake(link *gatewayLink, tunnelID string, paylo
 		}
 	}
 	s.tunnels.Store(tunnelID, tc)
-	link.tunnels.Store(tunnelID, tc)
 	return s.ackHandshake(link, tunnelID, true, "")
 }
 
@@ -253,7 +269,7 @@ func (s *Server) ackHandshake(link *gatewayLink, tunnelID string, ok bool, errMs
 	return link.writeFrame(codec.TunnelHandshakeAck, tunnelID, payload)
 }
 
-// closeTunnel 硬关闭指定隧道：关 actor、删全局与所属 link 索引，并通知 gateway 关闭客户端连接。
+// closeTunnel 硬关闭指定隧道：关 actor、删全局索引，并通知 gateway 关闭客户端连接。
 // 用于故障踢线等需要立即销毁 actor 的路径。
 func (s *Server) closeTunnel(tunnelID string, tc *TunnelConn) {
 	if uid, ok := tunnelUID(tunnelID); ok {
@@ -262,21 +278,15 @@ func (s *Server) closeTunnel(tunnelID string, tc *TunnelConn) {
 	tc.Close()
 	s.tunnels.Delete(tunnelID)
 	if tc.link != nil {
-		tc.link.tunnels.Delete(tunnelID)
 		// 通知 gateway 关闭该玩家客户端连接
 		_ = tc.link.writeFrame(codec.TunnelKick, tunnelID, nil)
 	}
-	s.uidByTunnel.Delete(tunnelID)
 }
 
 // detachTunnel 连接断开路径：关隧道、删索引，actor 保留进入休眠，等待重连复用。
 func (s *Server) detachTunnel(tunnelID string, tc *TunnelConn) {
 	tc.Close()
 	s.tunnels.Delete(tunnelID)
-	if tc.link != nil {
-		tc.link.tunnels.Delete(tunnelID)
-	}
-	s.uidByTunnel.Delete(tunnelID)
 	if uid, ok := tunnelUID(tunnelID); ok {
 		if err := s.ActorManner.Detach(uid); err != nil &&
 			!errors.Is(err, core.ErrActorNotFound) && !errors.Is(err, core.ErrActorClose) {

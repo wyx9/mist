@@ -3,7 +3,6 @@
 package gameserver
 
 import (
-	"fmt"
 	"strings"
 
 	"simple_game/game/pkg/logger"
@@ -43,13 +42,4 @@ func (s *Server) serve(addr string) {
 			s.handleGatewayLink(link)
 		}()
 	}
-}
-
-// ReplyToGateway 通过隧道帧回包给 Gateway。
-func (s *Server) ReplyToGateway(tunnelID string, data []byte) error {
-	val, ok := s.tunnels.Load(tunnelID)
-	if !ok {
-		return fmt.Errorf("tunnel not found: %s", tunnelID)
-	}
-	return val.(*TunnelConn).WriteMessage(data)
 }

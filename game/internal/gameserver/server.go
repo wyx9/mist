@@ -1,7 +1,7 @@
 // internal/gameserver/server.go
 // Server 聚合根与全局单例：持有所有组件。
-// 职责拆分：生命周期见 lifecycle.go，网络接入见 network.go，
-// 认证见 auth.go，Actor/消息门面见 facade.go，消息处理见 message.go。
+// 职责拆分：网络接入见 network.go，配置见 config.go，持久化见 persist.go，
+// 隧道与消息处理见 tunnel.go、message.go，位置注册见 location.go。
 package gameserver
 
 import (
@@ -51,9 +51,6 @@ type Server struct {
 
 	// 注册到 Redis 的 game 地址
 	regAddr string
-
-	// 登录后绑定的玩家 uid 表 — tunnelID → int64(uid)
-	uidByTunnel sync.Map
 
 	// 内部 RPC 客户端（跨进程透明路由）
 	rpcClient *rpc.Client
