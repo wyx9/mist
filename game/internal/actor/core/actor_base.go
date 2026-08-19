@@ -2,9 +2,10 @@ package core
 
 import (
 	"context"
-	"strconv"
 	"sync/atomic"
 	"time"
+
+	"simple_game/game/pkg/tool"
 )
 
 const (
@@ -139,8 +140,8 @@ func (ac *ActorBase) markAttached() bool {
 	}
 }
 
-// uidKey 将 uid 转为 actor 注册键（十进制字符串）。
-func uidKey(uid int64) string { return strconv.FormatInt(uid, 10) }
+// uidKey 将 uid 转为 actor 注册键（十进制字符串），统一走本地 tool 工具类转换。
+func uidKey(uid int64) string { return tool.ToString(uid) }
 
 // NewActorBase 创建新的 Actor 实例并启动主循环。uid 为全局唯一身份，注册键为其十进制字符串。
 func NewActorBase(uid int64, callBack IActor) *ActorBase {

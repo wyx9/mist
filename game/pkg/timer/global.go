@@ -3,12 +3,12 @@ package timer
 import (
 	"context"
 	"encoding/json"
-	"strconv"
 	"time"
 
 	"github.com/go-redis/redis/v8"
 
 	"simple_game/game/pkg/logger"
+	"simple_game/game/pkg/tool"
 	"simple_game/game/pkg/uid"
 )
 
@@ -49,7 +49,7 @@ type globalTaskRec struct {
 // ScheduleGlobal 写入一个全局定时任务；ID 为空时自动分配全局自增 ID。
 func ScheduleGlobal(ctx context.Context, rdb *redis.Client, task *GlobalTask) error {
 	if task.ID == "" {
-		task.ID = strconv.FormatInt(uid.NewUid(), 10)
+		task.ID = tool.ToString(uid.NewUid())
 	}
 	rec := globalTaskRec{Target: task.Target, DueAt: task.DueAt, Tag: task.Tag, Payload: task.Payload}
 	raw, err := json.Marshal(rec)
@@ -94,7 +94,7 @@ func pollOnce(ctx context.Context, rdb *redis.Client, deliver Deliverer) {
 	now := time.Now().Unix()
 	ids, err := rdb.ZRangeByScore(ctx, GlobalZSetKey, &redis.ZRangeBy{
 		Min: "-inf",
-		Max: strconv.FormatInt(now, 10),
+		Max: tool.ToString(now),
 	}).Result()
 	if err != nil {
 		logger.ERROR("global timer poll failed:", err)

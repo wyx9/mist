@@ -4,7 +4,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 	"simple_game/game/pkg/codec"
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/network"
+	"simple_game/game/pkg/tool"
 )
 
 // handshakeMsg 客户端握手消息。
@@ -99,7 +99,7 @@ func handleClient(clientConn network.NetConn, rdb *redis.Client, secret []byte) 
 		return
 	}
 	// 隧道/会话以 uid 为唯一身份，playerName 仅展示
-	tunnelID := strconv.FormatInt(uid, 10)
+	tunnelID := tool.ToString(uid)
 	logger.INFO("client handshake:", clientConn.RemoteAddr(), "player:", playerName, "uid:", uid)
 
 	// 3. 查 Redis 获取目标 game 地址

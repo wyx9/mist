@@ -4,13 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strconv"
 	"sync"
 	"time"
 
 	"google.golang.org/protobuf/proto"
 
 	"simple_game/game/api/protos/pt"
+	"simple_game/game/pkg/tool"
 	"simple_game/game/pkg/uid"
 )
 
@@ -101,7 +101,7 @@ func (c *Client) Call(to int64, from string, msg interface{}, timeout time.Durat
 		return nil, err
 	}
 
-	reqID := strconv.FormatInt(uid.NewUid(), 10)
+	reqID := tool.ToString(uid.NewUid())
 	pc := &pendingCall{ch: make(chan interface{}, 1), resType: e.resType}
 	c.pending.Store(reqID, pc)
 
@@ -148,7 +148,7 @@ func (c *Client) Cast(to int64, from string, msg interface{}) error {
 
 	frame := &pt.RpcFrame{
 		Kind:        pt.RpcKind_RPC_REQUEST,
-		ReqId:       strconv.FormatInt(uid.NewUid(), 10),
+		ReqId:       tool.ToString(uid.NewUid()),
 		UID:         to,
 		Method:      method,
 		OriginNode:  c.node,

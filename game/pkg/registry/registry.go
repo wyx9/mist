@@ -2,10 +2,11 @@ package registry
 
 import (
 	"context"
-	"strconv"
 	"time"
 
 	"github.com/go-redis/redis/v8"
+
+	"simple_game/game/pkg/tool"
 )
 
 // game 服注册表：game 启动后注册自身地址并定期心跳续期，gateway/webapi 通过
@@ -62,7 +63,7 @@ func ListFresh(ctx context.Context, rdb *redis.Client) ([]string, error) {
 
 // ActorLocKey 返回 actor 位置表 key：actor:loc:{uid} -> 节点 addr。
 func ActorLocKey(uid int64) string {
-	return actorLocPrefix + strconv.FormatInt(uid, 10)
+	return actorLocPrefix + tool.ToString(uid)
 }
 
 // SetActorLoc 覆盖写入某个 actor 的位置：actor:loc:{uid} = addr。
@@ -131,7 +132,7 @@ func SweepActorLoc(ctx context.Context, rdb *redis.Client, addr string) {
 
 // ActorInitKey 返回 actor 初始化记录 key：actor:init:{uid} -> category。
 func ActorInitKey(uid int64) string {
-	return actorInitPrefix + strconv.FormatInt(uid, 10)
+	return actorInitPrefix + tool.ToString(uid)
 }
 
 // RegisterActorInit 记录某 uid 已初始化及其类别（actor 首次创建时写入，长期保留，供按需复活）。

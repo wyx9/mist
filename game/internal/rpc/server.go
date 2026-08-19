@@ -2,12 +2,12 @@ package rpc
 
 import (
 	"fmt"
-	"strconv"
 	"time"
 
 	"google.golang.org/protobuf/proto"
 
 	"simple_game/game/api/protos/pt"
+	"simple_game/game/pkg/tool"
 )
 
 // LocalCaller 本地投递能力：由 core.AManager 实现（CallLocal/SendLocal，不带远程回退）。
@@ -46,7 +46,7 @@ func Serve(local LocalCaller, frame *pt.RpcFrame, reply func(*pt.RpcFrame) error
 		Kind:        pt.RpcKind_RPC_RESPONSE,
 		ReqId:       frame.ReqId,
 		OriginNode:  frame.OriginNode,
-		OriginActor: strconv.FormatInt(frame.UID, 10),
+		OriginActor: tool.ToString(frame.UID),
 	}
 	res, err := local.CallLocal(frame.UID, e.category, frame.OriginActor, req, timeout)
 	if err != nil {

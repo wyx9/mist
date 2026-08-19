@@ -3,9 +3,10 @@ package storage
 import (
 	"context"
 	"errors"
-	"strconv"
 
 	"github.com/go-redis/redis/v8"
+
+	"simple_game/game/pkg/tool"
 )
 
 const dirtySetPrefix = "dirty:"
@@ -53,7 +54,7 @@ func (s *RedisStore) Save(ctx context.Context, key string, codec Codec, v any, c
 func (s *RedisStore) SaveRaw(ctx context.Context, key string, raw []byte, category string, actorID int64) error {
 	pipe := s.rdb.TxPipeline()
 	pipe.Set(ctx, key, raw, 0)
-	pipe.SAdd(ctx, DirtySetKey(category), strconv.FormatInt(actorID, 10))
+	pipe.SAdd(ctx, DirtySetKey(category), tool.ToString(actorID))
 	if _, err := pipe.Exec(ctx); err != nil {
 		return err
 	}
@@ -64,7 +65,7 @@ func (s *RedisStore) SaveRaw(ctx context.Context, key string, raw []byte, catego
 func (s *RedisStore) Delete(ctx context.Context, key string, category string, actorID int64) error {
 	pipe := s.rdb.TxPipeline()
 	pipe.Del(ctx, key)
-	pipe.SAdd(ctx, DirtySetKey(category), strconv.FormatInt(actorID, 10))
+	pipe.SAdd(ctx, DirtySetKey(category), tool.ToString(actorID))
 	if _, err := pipe.Exec(ctx); err != nil {
 		return err
 	}

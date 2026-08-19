@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,6 +17,7 @@ import (
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/network"
 	"simple_game/game/pkg/registry"
+	"simple_game/game/pkg/tool"
 )
 
 const (
@@ -220,7 +220,7 @@ func (l *gameLink) replyError(frame *pt.RpcFrame, msg string) {
 		Kind:        pt.RpcKind_RPC_RESPONSE,
 		ReqId:       frame.ReqId,
 		OriginNode:  frame.OriginNode,
-		OriginActor: strconv.FormatInt(frame.UID, 10),
+		OriginActor: tool.ToString(frame.UID),
 		Error:       msg,
 	}
 	target, ok := gameLinks.Load(frame.OriginNode)

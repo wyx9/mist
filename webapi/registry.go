@@ -4,10 +4,11 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"strconv"
 	"time"
 
 	"github.com/go-redis/redis/v8"
+
+	"simple_game/game/pkg/tool"
 )
 
 const redisKeyPrefix = "player:"
@@ -28,12 +29,12 @@ func registerPlayer(rdb *redis.Client, uid int64, gatewayAddr, gameAddr string, 
 	if err != nil {
 		return err
 	}
-	return rdb.Set(context.Background(), redisKeyPrefix+strconv.FormatInt(uid, 10), string(data), ttl).Err()
+	return rdb.Set(context.Background(), redisKeyPrefix+tool.ToString(uid), string(data), ttl).Err()
 }
 
 // getPlayerReg 从 Redis 读取玩家注册信息（键为 player:{uid}）。
 func getPlayerReg(rdb *redis.Client, uid int64) (*playerRegInfo, error) {
-	val, err := rdb.Get(context.Background(), redisKeyPrefix+strconv.FormatInt(uid, 10)).Result()
+	val, err := rdb.Get(context.Background(), redisKeyPrefix+tool.ToString(uid)).Result()
 	if err != nil {
 		return nil, err
 	}

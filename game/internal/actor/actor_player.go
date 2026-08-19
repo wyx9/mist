@@ -2,7 +2,6 @@ package actor
 
 import (
 	"errors"
-	"strconv"
 	"time"
 
 	"simple_game/game/api/protos/pt"
@@ -10,6 +9,7 @@ import (
 	"simple_game/game/internal/actor/entity"
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/network"
+	"simple_game/game/pkg/tool"
 )
 
 // Player 玩家业务 Actor，实现 core.IActor / core.Persistable / core.MessageHandler / core.IdleTimeoutProvider。
@@ -172,7 +172,7 @@ func (p *Player) notifyRoomLeave() {
 	if p.mgr == nil {
 		return
 	}
-	if err := p.mgr.Cast(RoomUID, strconv.FormatInt(p.uid, 10), &pt.RoomPlayerLeave{UID: p.uid}); err != nil {
+	if err := p.mgr.Cast(RoomUID, tool.ToString(p.uid), &pt.RoomPlayerLeave{UID: p.uid}); err != nil {
 		logger.ERROR("notify room leave failed:", err, "uid:", p.uid)
 	}
 }
