@@ -27,10 +27,10 @@
 | 目录/包 | 职责 | 禁止 |
 | --- | --- | --- |
 | `game/internal/actor` | Actor 模型：IActor / ActorBase / AManager | 跨 actor 共享可变状态；actor 内加锁 |
-| `game/internal/gameserver` | 服务器聚合根：生命周期、网络接入、认证、门面、消息处理（各自成文件） | 业务逻辑混入网络层 |
+| `game/internal/gameserver` | 服务器聚合根：生命周期、网络接入、隧道/消息、持久化、位置注册（各自成文件） | 业务逻辑混入网络层 |
 | `game/internal/route` | cmd → handler 注册与分发 | 感知具体业务 |
 | `game/internal/controller` | 业务 handler（薄层） | 框架逻辑 |
-| `game/internal/dispatch` | worker pool 任务分发 | 业务 |
+| `game/internal/persist` | 持久化调度（tick 落盘、脏集合同步 MySQL） | 业务 |
 | `game/pkg/*` | 无业务的基础设施（网络/编解码/协议/日志/存储） | 业务 |
 | `gateway/` | 握手 + 纯字节转发 | 任何业务逻辑 |
 | `webapi/` | HTTP API 服务 | 依赖 `game/internal` |
@@ -41,7 +41,7 @@
 - 网络层不得感知业务消息内容（只处理字节/帧）
 - gateway 不做业务（不解析、不重打包业务消息）
 - controller 不放框架逻辑
-- 跨 actor 通信只能走消息（`ctx.Send` / `ctx.Call`），禁止直接操作其他 actor 内部状态
+- 跨 actor 通信只能走消息（`ctx.Cast` / `ctx.Call`），禁止直接操作其他 actor 内部状态
 
 ## 4. 代码风格
 
