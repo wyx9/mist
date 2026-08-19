@@ -174,7 +174,6 @@ func handleClient(clientConn network.NetConn, rdb *redis.Client, secret []byte) 
 	// 7. 建立 session 并启动转发（game -> client 由 gameLink reader 按隧道回投）
 	sess := &Session{TunnelID: tunnelID, UID: uid, ClientConn: clientConn, GameAddr: reg.GameAddr}
 	sessionMap.Store(tunnelID, sess)
-	link.sessions.Store(tunnelID, sess)
 	logger.INFO("session up:", playerName, "game:", reg.GameAddr)
 	defer func() {
 		logger.INFO("session closed:", playerName)

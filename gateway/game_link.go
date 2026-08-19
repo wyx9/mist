@@ -37,12 +37,12 @@ type handshakeResult struct {
 
 // gameLink 到单个 game 的长连接，上面多路复用多个玩家隧道。
 // 同时作为内部 RPC 的转发通道：game 之间的 RPC 请求/响应经此长连接转发。
+// 会话统一登记在全局 sessionMap（Session 经 GameAddr 关联本连接），此处无独立索引。
 type gameLink struct {
 	addr     string
 	conn     network.NetConn
 	writeMu  sync.Mutex
 	rdb      *redis.Client
-	sessions sync.Map // tunnelID -> *Session
 	pending  sync.Map // tunnelID -> chan handshakeResult
 	closed   atomic.Bool
 }
@@ -131,7 +131,7 @@ func (l *gameLink) readerLoop() {
 				ch.(chan handshakeResult) <- handshakeResult{ok: ack.OK, error: ack.Error}
 			}
 		case codec.TunnelData:
-			if s, ok := l.sessions.Load(tunnelID); ok {
+			if s, ok := sessionMap.Load(tunnelID); ok {
 				sess := s.(*Session)
 				logger.DEBUG("forward game->client:", len(payload), "player:", tunnelID)
 				if err := sess.ClientConn.WriteMessage(payload); err != nil {
@@ -139,7 +139,7 @@ func (l *gameLink) readerLoop() {
 				}
 			}
 		case codec.TunnelKick:
-			if s, ok := l.sessions.Load(tunnelID); ok {
+			if s, ok := sessionMap.Load(tunnelID); ok {
 				closeClientSession(s.(*Session))
 			}
 		case codec.TunnelPing:
@@ -247,10 +247,13 @@ func (l *gameLink) pingLoop() {
 	}
 }
 
-// closeAllSessions 长连接断开：关闭其上所有客户端会话、清理该节点的 actor 位置并删除连接。
+// closeAllSessions 长连接断开：关闭该节点上的所有客户端会话、清理该节点的 actor 位置并删除连接。
 func (l *gameLink) closeAllSessions() {
-	l.sessions.Range(func(key, value interface{}) bool {
-		closeClientSession(value.(*Session))
+	sessionMap.Range(func(key, value interface{}) bool {
+		sess := value.(*Session)
+		if sess.GameAddr == l.addr {
+			closeClientSession(sess)
+		}
 		return true
 	})
 	// 节点失联：清理指向该节点的 actor 位置记录（best-effort，最终一致）
@@ -269,12 +272,6 @@ func closeClientSession(s *Session) bool {
 	if cur, ok := sessionMap.Load(s.TunnelID); ok && cur == s {
 		sessionMap.Delete(s.TunnelID)
 		current = true
-	}
-	if l, ok := gameLinks.Load(s.GameAddr); ok {
-		link := l.(*gameLink)
-		if cur, ok := link.sessions.Load(s.TunnelID); ok && cur == s {
-			link.sessions.Delete(s.TunnelID)
-		}
 	}
 	_ = s.ClientConn.Close()
 	return current
