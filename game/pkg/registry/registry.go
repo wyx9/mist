@@ -65,10 +65,30 @@ func ActorLocKey(uid int64) string {
 	return actorLocPrefix + strconv.FormatInt(uid, 10)
 }
 
-// RegisterActorLoc 写入（或覆盖）某个 actor 的位置：actor:loc:{uid} = addr。
-// 由 game 在创建可路由 actor 时调用。
-func RegisterActorLoc(ctx context.Context, rdb *redis.Client, uid int64, addr string) error {
+// SetActorLoc 覆盖写入某个 actor 的位置：actor:loc:{uid} = addr。
+// 强制接管语义（握手/跨节点迁移时用）；普通创建请用 ClaimActorLoc 原子认领。
+func SetActorLoc(ctx context.Context, rdb *redis.Client, uid int64, addr string) error {
 	return rdb.Set(ctx, ActorLocKey(uid), addr, 0).Err()
+}
+
+// claimActorLocScript 原子认领：位置不存在或已属于 addr 时写入并返回 1，否则返回 0。
+var claimActorLocScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] or redis.call('EXISTS', KEYS[1]) == 0 then
+	redis.call('SET', KEYS[1], ARGV[1])
+	return 1
+else
+	return 0
+end
+`)
+
+// ClaimActorLoc 原子认领某个 actor 的位置（避免双节点同时创建同一 uid 的双写）。
+// 返回 claimed=true 表示认领成功（原本无记录或本就属于 addr）；false 表示已被其他节点占有。
+func ClaimActorLoc(ctx context.Context, rdb *redis.Client, uid int64, addr string) (bool, error) {
+	n, err := claimActorLocScript.Run(ctx, rdb, []string{ActorLocKey(uid)}, addr).Int64()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
 }
 
 // UnregisterActorLoc 删除某个 actor 的位置记录。由 game 在彻底删除可路由 actor 时调用。

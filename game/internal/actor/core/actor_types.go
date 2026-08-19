@@ -49,10 +49,17 @@ type Routable interface {
 	Routable() bool
 }
 
-// LocationRegistry 位置注册能力：由 gameserver 注入（写入/删除 Redis actor:loc，按 uid）。
+// LocationRegistry 位置注册能力：由 gameserver 注入（Redis actor:loc，按 uid）。
+// 位置表是「已实例化 actor 及其所在节点」的权威登记，owner 边界由此强制执行：
+//   - Register：原子认领，已被他节点占有时返回 ErrActorNotOwner（不覆盖）；
+//   - Claim：强制接管（覆盖写），供握手/跨节点迁移路径使用；
+//   - Unregister：彻底删除 actor 时清除位置；
+//   - IsOwner：查询位置是否归属本节点（无记录视为可认领，返回 true）。
 type LocationRegistry interface {
 	Register(uid int64) error
+	Claim(uid int64) error
 	Unregister(uid int64) error
+	IsOwner(uid int64) (bool, error)
 }
 
 // InitRegistry actor 初始化记录能力：由 gameserver 注入（Redis actor:init，uid -> category）。
@@ -69,6 +76,7 @@ var (
 	ErrActorClose    = errors.New("actor close")           // Actor 已关闭
 	ErrSendTimeout   = errors.New("send timeout")          // 发送超时
 	ErrSelfCall      = errors.New("self call not allowed") // 禁止 Actor 自调用（防止死锁）
+	ErrActorNotOwner = errors.New("actor not owned by this node") // 位置已被他节点占有，本节点非 owner
 )
 
 // ActorState Actor 生命周期状态。

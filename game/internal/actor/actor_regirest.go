@@ -23,7 +23,11 @@ func RegisterAll(am *core.AManager) {
 }
 
 // StartDaemonActor 启动常驻的 actor（幂等，按需启动）。
+// 使用 EnsureDaemon：常驻 actor 使用保留 uid（RoomUID），跳过 EnsureRunning 的 uid 合法性校验。
 func StartDaemonActor(am *core.AManager) {
-	_, _ = am.EnsureRunning(RoomUID, RoomActorName)
+	if _, err := am.EnsureDaemon(RoomUID, RoomActorName); err != nil {
+		logger.ERROR("start room actor failed:", err)
+		return
+	}
 	logger.INFO("room actor started")
 }

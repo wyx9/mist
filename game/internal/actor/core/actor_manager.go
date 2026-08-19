@@ -74,6 +74,13 @@ func (am *AManager) SetLocationRegistry(r LocationRegistry) {
 	am.locationReg = r
 }
 
+// locationRegSnapshot 读取位置注册实现引用快照。
+func (am *AManager) locationRegSnapshot() LocationRegistry {
+	am.mu.RLock()
+	defer am.mu.RUnlock()
+	return am.locationReg
+}
+
 // SetInitRegistry 注册 actor 初始化记录实现（Redis uid→category）。
 func (am *AManager) SetInitRegistry(r InitRegistry) {
 	am.mu.Lock()
@@ -228,6 +235,7 @@ func (am *AManager) removeFromCategories(ab *ActorBase) {
 }
 
 // Add 添加 Actor 到管理器：缓存空闲超时并刷新活动时间，自动按已注册类别建立索引。
+// 可路由 actor 创建时原子认领位置：已被他节点占有时回滚刚创建的实例并返回错误。
 func (am *AManager) Add(ab *ActorBase) error {
 	ab.manager = am // 注入管理器引用，供 handler 内部 RPC 使用
 	ab.idleTimeout = DefaultIdleTimeout
@@ -241,7 +249,14 @@ func (am *AManager) Add(ab *ActorBase) error {
 	ab.touchActivity()
 	am.actorMap.Store(ab.name, ab)
 	am.addToCategories(ab)
-	am.registerLocation(ab)
+	if err := am.registerLocation(ab); err != nil {
+		// 位置认领失败（已被他节点占有）：回滚刚创建的实例，避免残留双实例
+		am.remove(ab.id)
+		if serr := ab.Shutdown(CloseTimeout); serr != nil && !errors.Is(serr, ErrActorClose) {
+			logger.ERROR("rollback actor shutdown failed:", serr, "uid:", ab.id)
+		}
+		return err
+	}
 	return nil
 }
 
@@ -260,20 +275,17 @@ func (am *AManager) remove(uid int64) {
 	am.removeFromCategories(ab)
 }
 
-// registerLocation 若 actor 可路由且已注入位置注册实现，则写入位置表。
-func (am *AManager) registerLocation(ab *ActorBase) {
+// registerLocation 若 actor 可路由且已注入位置注册实现，则原子认领位置。
+// 认领失败（已被他节点占有）返回错误，由 Add 回滚刚创建的实例。
+func (am *AManager) registerLocation(ab *ActorBase) error {
 	if _, ok := ab.iActor.(Routable); !ok {
-		return
+		return nil
 	}
-	am.mu.RLock()
-	reg := am.locationReg
-	am.mu.RUnlock()
+	reg := am.locationRegSnapshot()
 	if reg == nil {
-		return
+		return nil
 	}
-	if err := reg.Register(ab.id); err != nil {
-		logger.ERROR("register actor location failed:", err, "uid:", ab.id)
-	}
+	return reg.Register(ab.id)
 }
 
 // unregisterLocation 若 actor 可路由且已注入位置注册实现，则删除位置记录（彻底删除时用）。
@@ -281,9 +293,7 @@ func (am *AManager) unregisterLocation(ab *ActorBase) {
 	if _, ok := ab.iActor.(Routable); !ok {
 		return
 	}
-	am.mu.RLock()
-	reg := am.locationReg
-	am.mu.RUnlock()
+	reg := am.locationRegSnapshot()
 	if reg == nil {
 		return
 	}
@@ -318,10 +328,7 @@ func (am *AManager) DeleteActor(uid int64, timeout time.Duration) error {
 		_ = reg.Unregister(uid)
 	}
 	if ab == nil {
-		am.mu.RLock()
-		reg := am.locationReg
-		am.mu.RUnlock()
-		if reg != nil {
+		if reg := am.locationRegSnapshot(); reg != nil {
 			_ = reg.Unregister(uid)
 		}
 		return nil
@@ -331,11 +338,23 @@ func (am *AManager) DeleteActor(uid int64, timeout time.Duration) error {
 }
 
 // EnsureRunning 确保 uid 对应 actor 已运行（本地/跨节点 RPC 按需启动的统一入口）。
+// 只允许 owner 节点调用：创建路径经位置原子认领（Add → registerLocation），
+// 已被他节点占有时返回 ErrActorNotOwner 且不残留实例。
 // category 仅在所有记录（内存 knownActors / Redis actor:init）均未命中时使用。
 func (am *AManager) EnsureRunning(uid int64, category string) (*ActorBase, error) {
 	if uid <= 0 {
 		return nil, fmt.Errorf("invalid actor uid: %d", uid)
 	}
+	return am.ensureRunning(uid, category)
+}
+
+// EnsureDaemon 启动常驻 actor（保留 uid，如 RoomUID）：跳过 uid 合法性校验。
+// 仅用于本地常驻、不参与路由的 actor（如每节点一个的 Room），不经过 RPC/路由路径。
+func (am *AManager) EnsureDaemon(uid int64, category string) (*ActorBase, error) {
+	return am.ensureRunning(uid, category)
+}
+
+func (am *AManager) ensureRunning(uid int64, category string) (*ActorBase, error) {
 	key := uidKey(uid)
 	if v, ok := am.actorMap.Load(key); ok {
 		ab := v.(*ActorBase)
@@ -365,7 +384,9 @@ func (am *AManager) EnsureRunning(uid int64, category string) (*ActorBase, error
 	return am.startByFactory(uid, cat)
 }
 
-// resolveLocal 解析本地 actor（category 为兜底类别）。
+// resolveLocal 解析本地 actor（category 为兜底类别），供 owner 节点路径使用
+// （Deliver 客户端消息 / SendLocal / CallLocal）。创建路径经位置原子认领，
+// 已被他节点占有时由 Add 回滚并返回 ErrActorNotOwner。
 // 判定「是否初始化过」：内存 knownActors → Redis actor:init → 兜底 category，
 // 覆盖进程重启/跨节点「数据在 Redis、本进程内存无记录」的 actor。
 func (am *AManager) resolveLocal(uid int64, category string) (*ActorBase, error) {
@@ -502,6 +523,7 @@ func (am *AManager) newTimerHandle(uid int64) TimerHandle {
 }
 
 // Detach 连接断开：actor 保留进入休眠（重连宽限开始计时），并向 actor 投递 ConnDetached 清理连接引用。
+// 若位置已被其他节点接管（跨节点顶替的孤儿），直接关闭本地实例，不保留休眠。
 func (am *AManager) Detach(uid int64) error {
 	ab := am.Find(uid)
 	if ab == nil {
@@ -510,10 +532,32 @@ func (am *AManager) Detach(uid int64) error {
 	if !ab.markDetached() {
 		return ErrActorClose
 	}
+	if am.isOrphan(ab) {
+		logger.INFO("actor location taken over by another node, close orphan, uid:", uid)
+		return am.CloseActor(uid, CloseTimeout)
+	}
 	if err := am.SendSystem(uid, "server", ConnDetached{}); err != nil {
 		logger.WARNING("detach send ConnDetached failed:", err, "uid:", uid)
 	}
 	return nil
+}
+
+// isOrphan 判断本地 actor 是否已成孤儿：可路由且位置已不属于本节点。
+// 位置查询失败时视为非孤儿（不误关），等待其他路径兜底。
+func (am *AManager) isOrphan(ab *ActorBase) bool {
+	if _, ok := ab.iActor.(Routable); !ok {
+		return false
+	}
+	reg := am.locationRegSnapshot()
+	if reg == nil {
+		return false
+	}
+	owner, err := reg.IsOwner(ab.id)
+	if err != nil {
+		logger.ERROR("check actor ownership failed:", err, "uid:", ab.id)
+		return false
+	}
+	return !owner
 }
 
 // Attach 重连唤醒休眠 actor：置运行并注入新连接；actor 已关闭时返回 ErrActorClose。
@@ -619,9 +663,10 @@ func (am *AManager) Deliver(uid int64, msg *protocol.Msg) error {
 }
 
 // Cast 向其他 actor 异步投递消息（业务消息，计入活动时间）。
-// 本地未命中且已初始化 → 按需复活；否则经跨进程路由转发（透明跨进程）。
+// 原则：本地只查运行实例（Find，不创建、不访问远程）；未命中时经跨进程路由转发，
+// 由 gateway 按 actor:loc 定位 owner 节点，owner 节点按需启动/复活（SendLocal）。
 func (am *AManager) Cast(to int64, from string, msg interface{}) error {
-	if ab, err := am.resolveLocal(to, ""); err == nil {
+	if ab := am.Find(to); ab != nil {
 		return am.deliver(ab, &Envelope{From: from, Kind: MsgSend, Payload: msg})
 	}
 	if r := am.remoteRouterSnapshot(); r != nil {
@@ -631,6 +676,8 @@ func (am *AManager) Cast(to int64, from string, msg interface{}) error {
 }
 
 // SendLocal 本地异步投递（不带远程回退），供远端 RPC 服务端（rpc.Serve）调用。
+// 请求已到达 owner 节点，允许按需启动并投递；创建路径经位置原子认领，
+// 非 owner 节点调用将返回 ErrActorNotOwner（不会残留实例）。
 // category 为兜底类别：本地无记录时据此按需创建/复活，避免依赖进程内存判断。
 func (am *AManager) SendLocal(to int64, category string, from string, msg interface{}) error {
 	ab, err := am.resolveLocal(to, category)
@@ -641,18 +688,20 @@ func (am *AManager) SendLocal(to int64, category string, from string, msg interf
 }
 
 // SendSystem 投递系统消息（PersistTick/连接生命周期），不刷新业务活动时间。
+// 只投递本地已存在的实例（Find），系统消息不创建/复活 actor。
 func (am *AManager) SendSystem(to int64, from string, msg interface{}) error {
-	ab, err := am.resolveLocal(to, "")
-	if err != nil {
-		return err
+	ab := am.Find(to)
+	if ab == nil {
+		return ErrActorNotFound
 	}
 	return am.deliver(ab, &Envelope{From: from, Kind: MsgSend, Payload: msg, System: true})
 }
 
 // Call 向其他 actor 发起 RPC 并等待回复。
-// 本地未命中且已初始化 → 按需复活；否则经跨进程路由转发（透明跨进程）。
+// 原则：本地只查运行实例（Find，不创建、不访问远程）；未命中时经跨进程路由转发，
+// 由 gateway 按 actor:loc 定位 owner 节点，owner 节点按需启动/复活（CallLocal）。
 func (am *AManager) Call(to int64, from string, msg interface{}, timeout time.Duration) (interface{}, error) {
-	if ab, err := am.resolveLocal(to, ""); err == nil {
+	if ab := am.Find(to); ab != nil {
 		return am.callLocal(ab, to, from, msg, timeout)
 	}
 	if r := am.remoteRouterSnapshot(); r != nil {
@@ -662,6 +711,8 @@ func (am *AManager) Call(to int64, from string, msg interface{}, timeout time.Du
 }
 
 // CallLocal 本地 RPC（不带远程回退），供远端 RPC 服务端（rpc.Serve）调用。
+// 请求已到达 owner 节点，允许按需启动并投递；创建路径经位置原子认领，
+// 非 owner 节点调用将返回 ErrActorNotOwner（不会残留实例）。
 // category 为兜底类别：本地无记录时据此按需创建/复活，避免依赖进程内存判断。
 func (am *AManager) CallLocal(to int64, category string, from string, msg interface{}, timeout time.Duration) (interface{}, error) {
 	ab, err := am.resolveLocal(to, category)

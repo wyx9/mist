@@ -192,6 +192,12 @@ func (s *Server) handleTunnelHandshake(link *gatewayLink, tunnelID string, paylo
 
 	// 复用策略：休眠中重连直接 Attach（不重建、不重载）；在线顶替关旧建新；不存在则新建/复活。
 	ab := s.ActorManner.Find(uid)
+	// 所有权校正：本地实例若已非 owner（位置被其他节点接管，跨节点顶替的孤儿）→ 关闭后按新建处理
+	if ab != nil && !s.isLocalOwner(uid) {
+		logger.INFO("local actor not owner, close orphan and rebuild, uid:", uid)
+		_ = s.ActorManner.CloseActor(uid, 5*time.Second)
+		ab = nil
+	}
 	reuse := ab != nil && !ab.Attached()
 	if ab != nil && ab.Attached() {
 		logger.INFO("replacing online actor (relogin), uid:", uid)
@@ -217,7 +223,10 @@ func (s *Server) handleTunnelHandshake(link *gatewayLink, tunnelID string, paylo
 		}
 	}
 	if !reuse {
-		// 按需启动：未初始化→工厂新建；已回收→复活重载；name 由握手补齐（新建时）
+		// 接管所有权（覆盖写位置，幂等）后按需启动：未初始化→工厂新建；已回收→复活重载；name 由握手补齐
+		if err := s.claimActorLoc(uid); err != nil {
+			logger.WARNING("claim actor location failed:", err, "uid:", uid)
+		}
 		ab, err := s.ActorManner.EnsureRunning(uid, "player")
 		if err != nil {
 			s.uidByTunnel.Delete(tunnelID)
