@@ -433,9 +433,8 @@ func (am *AManager) startNew(uid int64, category string, actor IActor) (*ActorBa
 	if ab == nil {
 		return nil, fmt.Errorf("create actor base failed: %s", key)
 	}
-	actorRef := actor
 	ab.clientHandler = func(ctx *ActorContext, msg interface{}) {
-		HandleClientMsg(actorRef, ctx, msg)
+		HandleClientMsg(actor, ctx, msg)
 	}
 	if err := am.Add(ab); err != nil {
 		return nil, err

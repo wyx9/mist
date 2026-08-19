@@ -66,7 +66,7 @@ func (p *Player) Stop() {
 func (p *Player) IdleTimeout() time.Duration { return 10 * time.Minute }
 
 // Routable 实现 core.Routable：玩家 actor 全局可路由（登录名全局唯一）。
-func (p *Player) Routable() bool { return true }
+func (p *Player) Routable() {}
 
 // ActorID 实现 core.Persistable：返回玩家全局唯一 uid。
 func (p *Player) ActorID() int64 { return p.uid }

@@ -42,11 +42,10 @@ type SetTimerHandle interface {
 	SetTimerHandle(h TimerHandle)
 }
 
-// Routable 标记接口：实现 Routable() bool 且返回 true 的 actor 全局可路由，
-// 创建/关闭时向位置表注册/注销。Player 实现（uid 全局唯一）；
-// Room 每节点常驻、始终本地，不实现。
+// Routable 标记接口：实现该接口的 actor 全局可路由（uid 全局唯一，
+// 创建/关闭时向位置表登记/注销）。Player 实现；Room 每节点常驻、始终本地，不实现。
 type Routable interface {
-	Routable() bool
+	Routable()
 }
 
 // LocationRegistry 位置注册能力：由 gameserver 注入（Redis actor:loc，按 uid）。
