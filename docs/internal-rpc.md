@@ -67,8 +67,9 @@ message RpcFrame {
 
 ### 4.2 `core`（actor）改动
 
-- `AManager.Cast/Call`：本地 `Find` 命中走本地；未命中查位置表（`IsOwner`）——本节点/可认领本地复活，他节点**委托 `remoteRouter`**（跨进程），**绝不本地创建他节点 actor**。
-- 新增 `CallLocal/SendLocal(to, category, ...)`：**不带远程回退**，供远端 RPC 服务端调用，防止环路；`category` 为兜底类别（本地无记录时按需创建/复活）。
+- `AManager.Cast/Call`：本地 `Find` 命中走本地；未命中查位置表（`IsOwner`）——本节点/可认领 → `EnsureRunning` 本地启动后投递，他节点**委托 `remoteRouter`**（跨进程），**绝不本地创建他节点 actor**。
+- `EnsureRunning(uid, category)` 是**唯一启动入口**：类别解析（knownActors → `actor:init` → 兜底 category）只在此发生一次，`Deliver`/`SendLocal`/`CallLocal`/`Cast/Call` 本地分流都直接复用它（无 `resolveLocal` 中间层）。
+- 新增 `CallLocal/SendLocal(to, category, ...)`：**不带远程回退**，owner 节点入口（`rpc.Serve` 调用），防止环路；`category` 为兜底类别（本地无记录时按需创建/复活）。
 - `actor_loop.dispatch`：内部消息先走 `rpc.Dispatch`（注册表），未注册回退到 `actor.HandleMessage`（框架生命周期消息 `PersistTick/ConnDetached/ConnAttached`）。
 - `Routable` 标记接口：可路由 actor（`Player`）创建时原子认领 `actor:loc:{uid}`；`Room`（每节点常驻）不实现。
 
@@ -91,10 +92,11 @@ message RpcFrame {
 
 | 方法 | 职责 | 边界约束 |
 | --- | --- | --- |
-| `Find(uid)` | 只查本地运行实例（运行中/休眠中） | 不启动、不访问远程 |
-| `EnsureRunning(uid, cat)` | 本地/跨节点 RPC 按需启动统一入口 | **只允许 owner 节点调用**；创建路径原子认领，非 owner 返回 `ErrActorNotOwner` 且不残留实例 |
-| `SendLocal / CallLocal` | 远端 RPC 服务端投递（`rpc.Serve` 调用） | 请求已到达 owner 节点，允许按需启动并投递 |
-| `Cast / Call` | 业务跨 actor 通信 | 本地 `Find` 未命中 → 查位置表：位置归本节点/可认领 → 本地复活；位置归他节点 → 远程路由（绝不本地创建他节点 actor） |
+| `Find(uid)` | 只查本地运行实例（运行中/休眠中） | 无副作用，不启动、不访问远程 |
+| `EnsureRunning(uid, cat)` | **唯一启动入口**：Find 命中唤醒 / 未命中一次类别解析 + 工厂创建 + 位置原子认领 | **只允许 owner 节点调用**；认领失败返回 `ErrActorNotOwner` 且回滚无残留 |
+| `SendLocal / CallLocal` | owner 节点入口（`rpc.Serve` 调用） | 请求已到达 owner 节点，`EnsureRunning` 按需启动并投递 |
+| `Cast / Call` | 业务跨 actor 通信（路由） | 本地 `Find` 未命中 → 一次 owner 查询分流：本节点/可认领 → `EnsureRunning` 本地启动；他节点 → 远程路由；启动被顶替（`ErrActorNotOwner`）→ 回退远程路由 |
+| `SendSystem` | 系统消息（PersistTick/连接生命周期） | Find-only，不创建不复活 |
 | `EnsureDaemon(uid, cat)` | 常驻 actor（如 `RoomUID=-1`） | 跳过 uid 合法性校验，仅本地常驻、不参与路由 |
 
 跨节点顶替（重新登录落到新节点）：握手路径先 `Claim`（覆盖写接管位置），再 `EnsureRunning`；旧节点在 `Detach` 时检测到「位置已不属于自己」即关闭本地孤儿实例，避免双实例。
@@ -104,7 +106,7 @@ message RpcFrame {
 ```
 A handler: ctx.Call(B_uid, &pt.XXXReq{})
   → AManager.Call: 本地 Find(B_uid) 未命中 → 查位置表 IsOwner(B_uid)
-      位置归本节点/无记录 → CallLocal 本地复活（不经 gateway）
+      位置归本节点/无记录 → EnsureRunning 本地启动 → callLocal（不经 gateway）
       位置归他节点 ↓
   → rpc.Client.Call: marshal + 登记 pending[reqID]
   → A↔gateway 长连接写 TunnelRPC(RPC_REQUEST, UID=B_uid, method=..., origin_node=A)
@@ -112,16 +114,16 @@ A handler: ctx.Call(B_uid, &pt.XXXReq{})
 gateway: ResolveActorLoc(B_uid) → 节点2（owner）→ 转发给 game B
 
 game B: rpc.Serve → AManager.CallLocal(B_uid, category)
-  → owner 节点按需启动/复活（EnsureRunning，位置原子认领）
+  → owner 节点 EnsureRunning（类别解析 + 位置原子认领）按需启动/复活
   → B 的 actor 串行循环 → rpc.Dispatch → 注册的 handler → 返回 proto 响应
   → 回写 TunnelRPC(RPC_RESPONSE, origin_node=A)
 
 gateway: 按 origin_node 回程给 game A → rpc.Client.OnResponse → pending 唤醒 → Call 返回
 ```
 
-- 目标已关闭但位置仍归本节点：`Cast/Call` 查位置表后**直接本地复活**，不经过 gateway 往返。
-- 目标已关闭（位置保留在他节点）：gateway 仍按 `actor:loc` 路由到 owner 节点，owner 节点 `SendLocal/CallLocal → EnsureRunning` 复活并重载数据后投递，调用方无感知。
-- 目标 owner 节点失联（位置已被清扫、可认领）：任意节点 `Cast/Call` 查位置表无记录 → 本地认领复活（虚拟 actor 语义）。
+- 目标已关闭但位置仍归本节点：`Cast/Call` 查位置表后 `EnsureRunning` **直接本地启动**，不经过 gateway 往返。
+- 目标已关闭（位置保留在他节点）：gateway 仍按 `actor:loc` 路由到 owner 节点，owner 节点 `SendLocal/CallLocal → EnsureRunning` 启动并重载数据后投递，调用方无感知。
+- 目标 owner 节点失联（位置已被清扫、可认领）：任意节点 `Cast/Call` 查位置表无记录 → 本地认领启动（虚拟 actor 语义）。
 
 ## 6. 如何新增内部消息
 

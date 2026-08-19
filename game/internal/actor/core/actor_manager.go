@@ -20,15 +20,15 @@ type categoryIndex struct {
 
 // AManager Actor 管理器：全局单例，负责所有 Actor 的存储、查找、消息投递与生命周期状态机。
 type AManager struct {
-	actorMap    sync.Map // uidKey → *ActorBase 主存储（运行中/休眠中）
-	knownActors sync.Map // uidKey → category 已初始化过（关闭后仍保留，供按需复活）
-	categories  sync.Map // categoryName(string) → *categoryIndex
-	factories   sync.Map // categoryName(string) → ActorFactory
-	mu          sync.RWMutex
-	createMu    sync.Mutex        // 串行化「工厂创建 + 启动」，避免同 uid 并发重复创建
-	sched       *timer.Scheduler  // actor 内部内存定时调度器（惰性创建）
+	actorMap     sync.Map // uidKey → *ActorBase 主存储（运行中/休眠中）
+	knownActors  sync.Map // uidKey → category 已初始化过（关闭后仍保留，供按需复活）
+	categories   sync.Map // categoryName(string) → *categoryIndex
+	factories    sync.Map // categoryName(string) → ActorFactory
+	mu           sync.RWMutex
+	createMu     sync.Mutex        // 串行化「工厂创建 + 启动」，避免同 uid 并发重复创建
+	sched        *timer.Scheduler  // actor 内部内存定时调度器（惰性创建）
 	faultHandler func(name string) // actor 故障回调（handler 超时等），由 gameserver 设置
-	remoteRouter rpc.RemoteRouter   // 跨进程路由（本地未命中时委托），由 gameserver 注入
+	remoteRouter rpc.RemoteRouter  // 跨进程路由（本地未命中时委托），由 gameserver 注入
 	locationReg  LocationRegistry  // 可路由 actor 位置注册，由 gameserver 注入
 	initReg      InitRegistry      // actor 初始化记录（uid→category，Redis 持久化），由 gameserver 注入
 	sweeperCtx   context.Context
@@ -384,29 +384,8 @@ func (am *AManager) ensureRunning(uid int64, category string) (*ActorBase, error
 	return am.startByFactory(uid, cat)
 }
 
-// resolveLocal 解析本地 actor（category 为兜底类别），供 owner 节点路径使用
-// （Deliver 客户端消息 / SendLocal / CallLocal / Cast/Call 的本地复活分支）。创建路径经位置原子认领，
-// 已被他节点占有时由 Add 回滚并返回 ErrActorNotOwner。
-// 判定「是否初始化过」：内存 knownActors → Redis actor:init → 兜底 category，
-// 覆盖进程重启/跨节点「数据在 Redis、本进程内存无记录」的 actor。
-func (am *AManager) resolveLocal(uid int64, category string) (*ActorBase, error) {
-	if ab := am.Find(uid); ab != nil {
-		if ab.State() == StateSleeping {
-			ab.wake()
-		}
-		return ab, nil
-	}
-	cat, err := am.actorCategory(uid, category)
-	if err != nil {
-		return nil, err
-	}
-	if cat == "" {
-		return nil, ErrActorNotFound
-	}
-	return am.EnsureRunning(uid, cat)
-}
-
 // actorCategory 获取 uid 的类别：内存 knownActors → Redis actor:init → 兜底参数。
+// 只在 EnsureRunning（唯一启动入口）内部调用，避免重复查询。
 func (am *AManager) actorCategory(uid int64, fallback string) (string, error) {
 	key := uidKey(uid)
 	if v, ok := am.knownActors.Load(key); ok {
@@ -654,8 +633,9 @@ func (am *AManager) ShutdownActors(timeout time.Duration) {
 }
 
 // Deliver 投递客户端消息（来自网络层）。msg 为已解析的消息信封。
+// 客户端连接所在节点即 owner，未命中时按需启动（EnsureRunning）。
 func (am *AManager) Deliver(uid int64, msg *protocol.Msg) error {
-	ab, err := am.resolveLocal(uid, "")
+	ab, err := am.EnsureRunning(uid, "")
 	if err != nil {
 		return err
 	}
@@ -663,17 +643,17 @@ func (am *AManager) Deliver(uid int64, msg *protocol.Msg) error {
 }
 
 // Cast 向其他 actor 异步投递消息（业务消息，计入活动时间）。
-// 原则：本地 Find 命中直接投递（不创建、不访问远程）；未命中时查位置表（Redis actor:loc）——
-//   - 位置归属本节点或无记录（可认领）→ 本地按需复活（不经过 gateway 往返）；
-//   - 位置归属他节点 → 走远程路由，gateway 按位置转发到 owner 节点；
-//   - 本地复活时位置刚被接管（ErrActorNotOwner）→ 回退远程路由（gateway 按最新位置转发）。
+// 职责：路由。本地 Find 命中 → 直接投递；未命中 → 一次 owner 查询分流：
+//   - owner 在本节点或无记录（可认领）→ EnsureRunning 本地启动后投递（不经 gateway）；
+//   - owner 在他节点 → 远程路由，gateway 按 actor:loc 转发到 owner 节点；
+//   - 本地启动时位置刚被接管（ErrActorNotOwner）→ 回退远程路由（gateway 按最新位置转发）。
 func (am *AManager) Cast(to int64, from string, msg interface{}) error {
 	if ab := am.Find(to); ab != nil {
 		return am.deliver(ab, &Envelope{From: from, Kind: MsgSend, Payload: msg})
 	}
-	if am.shouldReviveLocal(to) {
-		if err := am.SendLocal(to, "", from, msg); err == nil || !errors.Is(err, ErrActorNotOwner) {
-			return err
+	if am.ownerIsLocal(to) {
+		if ab, err := am.EnsureRunning(to, ""); err == nil {
+			return am.deliver(ab, &Envelope{From: from, Kind: MsgSend, Payload: msg})
 		}
 	}
 	if r := am.remoteRouterSnapshot(); r != nil {
@@ -682,12 +662,12 @@ func (am *AManager) Cast(to int64, from string, msg interface{}) error {
 	return ErrActorNotFound
 }
 
-// SendLocal 本地异步投递（不带远程回退），供远端 RPC 服务端（rpc.Serve）调用。
+// SendLocal 本地异步投递（不带远程回退），owner 节点入口（供 rpc.Serve 调用）。
 // 请求已到达 owner 节点，允许按需启动并投递；创建路径经位置原子认领，
 // 非 owner 节点调用将返回 ErrActorNotOwner（不会残留实例）。
 // category 为兜底类别：本地无记录时据此按需创建/复活，避免依赖进程内存判断。
 func (am *AManager) SendLocal(to int64, category string, from string, msg interface{}) error {
-	ab, err := am.resolveLocal(to, category)
+	ab, err := am.EnsureRunning(to, category)
 	if err != nil {
 		return err
 	}
@@ -705,17 +685,17 @@ func (am *AManager) SendSystem(to int64, from string, msg interface{}) error {
 }
 
 // Call 向其他 actor 发起 RPC 并等待回复。
-// 原则：本地 Find 命中直接本地调用（不创建、不访问远程）；未命中时查位置表（Redis actor:loc）——
-//   - 位置归属本节点或无记录（可认领）→ 本地按需复活（不经过 gateway 往返）；
-//   - 位置归属他节点 → 走远程路由，gateway 按位置转发到 owner 节点；
-//   - 本地复活时位置刚被接管（ErrActorNotOwner）→ 回退远程路由（gateway 按最新位置转发）。
+// 职责：路由。本地 Find 命中 → 直接本地调用；未命中 → 一次 owner 查询分流：
+//   - owner 在本节点或无记录（可认领）→ EnsureRunning 本地启动后调用（不经 gateway）；
+//   - owner 在他节点 → 远程路由，gateway 按 actor:loc 转发到 owner 节点；
+//   - 本地启动时位置刚被接管（ErrActorNotOwner）→ 回退远程路由（gateway 按最新位置转发）。
 func (am *AManager) Call(to int64, from string, msg interface{}, timeout time.Duration) (interface{}, error) {
 	if ab := am.Find(to); ab != nil {
 		return am.callLocal(ab, to, from, msg, timeout)
 	}
-	if am.shouldReviveLocal(to) {
-		if res, err := am.CallLocal(to, "", from, msg, timeout); err == nil || !errors.Is(err, ErrActorNotOwner) {
-			return res, err
+	if am.ownerIsLocal(to) {
+		if ab, err := am.EnsureRunning(to, ""); err == nil {
+			return am.callLocal(ab, to, from, msg, timeout)
 		}
 	}
 	if r := am.remoteRouterSnapshot(); r != nil {
@@ -724,10 +704,10 @@ func (am *AManager) Call(to int64, from string, msg interface{}, timeout time.Du
 	return nil, ErrActorNotFound
 }
 
-// shouldReviveLocal 本地 Find 未命中时是否应在本地复活：
-// 位置归属本节点或无记录（可认领）→ true；位置归属他节点、未注入位置表或查询失败 → false
-// （查询失败保守走远程路由，由 gateway 再次解析）。
-func (am *AManager) shouldReviveLocal(uid int64) bool {
+// ownerIsLocal 判断本地 Find 未命中时是否应走本地启动：owner 在本节点或无记录（可认领）→ true。
+// 未注入位置表或查询失败 → false（保守走远程路由，由 gateway 再次解析）。
+// 这是 core 唯一的 owner 查询点（复用 LocationRegistry.IsOwner，不新增抽象）。
+func (am *AManager) ownerIsLocal(uid int64) bool {
 	reg := am.locationRegSnapshot()
 	if reg == nil {
 		return false
@@ -739,12 +719,12 @@ func (am *AManager) shouldReviveLocal(uid int64) bool {
 	return owner
 }
 
-// CallLocal 本地 RPC（不带远程回退），供远端 RPC 服务端（rpc.Serve）调用。
+// CallLocal 本地 RPC（不带远程回退），owner 节点入口（供 rpc.Serve 调用）。
 // 请求已到达 owner 节点，允许按需启动并投递；创建路径经位置原子认领，
 // 非 owner 节点调用将返回 ErrActorNotOwner（不会残留实例）。
 // category 为兜底类别：本地无记录时据此按需创建/复活，避免依赖进程内存判断。
 func (am *AManager) CallLocal(to int64, category string, from string, msg interface{}, timeout time.Duration) (interface{}, error) {
-	ab, err := am.resolveLocal(to, category)
+	ab, err := am.EnsureRunning(to, category)
 	if err != nil {
 		return nil, err
 	}
