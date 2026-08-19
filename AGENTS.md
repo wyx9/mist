@@ -79,6 +79,7 @@
 
 ## 7. 提交规范
 
+- **改完代码不立即 commit**：先向用户汇报改动与验证结果，只有用户明确同意后才提交
 - 按逻辑点分步提交，一个 commit 一个主题
 - commit message 用中文 Conventional Commits：`feat:` / `refactor:` / `fix:` / `docs:` / `chore:` 等
 - 提交前确认不夹带无关文件（如本地工具配置）
