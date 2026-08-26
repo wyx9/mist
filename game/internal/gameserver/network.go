@@ -35,11 +35,14 @@ func (s *Server) serve(addr string) {
 			continue
 		}
 		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-			link := &gatewayLink{conn: conn}
-			s.links.Store(link, link)
-			s.handleGatewayLink(link)
-		}()
+		go s.acceptGatewayConn(conn)
 	}
+}
+
+// acceptGatewayConn 处理一条新接入的 gateway 长连接（goroutine 入口，随 wg 管理生命周期）。
+func (s *Server) acceptGatewayConn(conn network.NetConn) {
+	defer s.wg.Done()
+	link := &gatewayLink{conn: conn}
+	s.links.Store(link, link)
+	s.handleGatewayLink(link)
 }

@@ -125,9 +125,7 @@ func (s *Server) Start(opts StartOptions) error {
 	actor.StartDaemonActor(s.ActorManner)
 
 	// actor 故障（handler 超时）→ 异步踢掉该玩家连接
-	s.ActorManner.SetFaultHandler(func(name string) {
-		go s.kickFaultedTunnel(name)
-	})
+	s.ActorManner.SetFaultHandler(s.onActorFault)
 	s.ActorManner.Start()
 	persistMgr, err := newPersistManager(cfg, s.ActorManner)
 	if err != nil {
@@ -138,11 +136,8 @@ func (s *Server) Start(opts StartOptions) error {
 	}
 	s.persist = persistMgr
 
-	// 注册 player 工厂：按需启动/复活玩家 actor 时使用（闭包捕获持久化句柄）
-	playerStore := s.persist.HandleFor("player")
-	if err := s.ActorManner.RegisterFactory("player", func(uid int64) (core.IActor, error) {
-		return actor.NewPlayer(s.ActorManner, uid, playerStore), nil
-	}); err != nil {
+	// 注册 player 工厂：按需启动/复活玩家 actor 时使用（持久化句柄来自 persist 管理器）
+	if err := s.ActorManner.RegisterFactory("player", s.newPlayerActor); err != nil {
 		return fmt.Errorf("register player factory: %w", err)
 	}
 
@@ -276,4 +271,14 @@ func (s *Server) gameHeartbeat() {
 			}
 		}
 	}
+}
+
+// onActorFault actor 故障回调（handler 超时等）：异步踢掉该玩家的隧道连接。
+func (s *Server) onActorFault(name string) {
+	go s.kickFaultedTunnel(name)
+}
+
+// newPlayerActor player 工厂：按需启动/复活玩家 actor 时创建实例并注入持久化句柄。
+func (s *Server) newPlayerActor(uid int64) (core.IActor, error) {
+	return actor.NewPlayer(s.ActorManner, uid, s.persist.HandleFor("player")), nil
 }

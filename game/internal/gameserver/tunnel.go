@@ -162,7 +162,7 @@ func (s *Server) handleTunnelFrame(link *gatewayLink, data []byte) error {
 }
 
 // handleRPCFrame 处理 gateway 转发来的内部 RPC 帧。
-// RPC_REQUEST 每请求一个 goroutine 隔离同步等待（CallLocal 最长阻塞 timeout），
+// RPC_REQUEST 每请求一个 goroutine（serveRPCFrame）隔离同步等待（CallLocal 最长阻塞 timeout），
 // 避免慢 RPC 卡住网关长连接的读循环（该连接承载所有玩家流量）；
 // 有序性由目标 actor 的消息队列保证。RPC_RESPONSE 唤醒等待中的本地调用。
 func (s *Server) handleRPCFrame(link *gatewayLink, payload []byte) error {
@@ -172,11 +172,7 @@ func (s *Server) handleRPCFrame(link *gatewayLink, payload []byte) error {
 	}
 	switch frame.Kind {
 	case pt.RpcKind_RPC_REQUEST:
-		go func() {
-			if err := rpc.Serve(s.ActorManner, frame, replyRPC(link)); err != nil {
-				logger.ERROR("rpc serve failed:", err, "method:", frame.Method)
-			}
-		}()
+		go s.serveRPCFrame(link, frame)
 		return nil
 	case pt.RpcKind_RPC_RESPONSE:
 		if s.rpcClient != nil {
@@ -185,6 +181,13 @@ func (s *Server) handleRPCFrame(link *gatewayLink, payload []byte) error {
 		return nil
 	}
 	return fmt.Errorf("unknown rpc frame kind: %d", frame.Kind)
+}
+
+// serveRPCFrame 在独立 goroutine 处理远端 RPC 请求（隔离同步等待，避免卡住读循环）。
+func (s *Server) serveRPCFrame(link *gatewayLink, frame *pt.RpcFrame) {
+	if err := rpc.Serve(s.ActorManner, frame, replyRPC(link)); err != nil {
+		logger.ERROR("rpc serve failed:", err, "method:", frame.Method)
+	}
 }
 
 // replyRPC 回写 RPC 响应帧到当前 gateway 长连接。
