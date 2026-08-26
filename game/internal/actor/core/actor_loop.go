@@ -1,33 +1,32 @@
 package core
 
 import (
-	"context"
 	"fmt"
+	"time"
 
 	"simple_game/game/internal/rpc"
 	"simple_game/game/pkg/logger"
 )
 
-// loop Actor 的主循环：处理消息，循环退出时执行 Stop 清理并通知关闭。
+// loop Actor 的主循环：单协程从队列取消息并同步处理，保证 actor 内严格串行
+// （对齐 skynet service 的单 worker 串行处理模型，不每消息开 goroutine）。
 // request 通道永不关闭：投递方通过监听 stop 通道避免与关闭竞态。
 func (ac *ActorBase) loop() {
 	// 调用 Actor 的启动函数
 	ac.iActor.Start()
-
 	go func() {
 		defer func() {
-			ac.iActor.Stop() // 停止 Actor（落盘兜底）
+			ac.iActor.Stop()
 			ac.setState(StateClosed)
-			close(ac.stop) // 通知 Shutdown 等待方
+			close(ac.stop)
 		}()
-
 		for {
 			select {
 			case <-ac.ctx.Done(): // 上下文取消时退出
 				logger.INFO("Actor context canceled, name:", ac.name)
 				return
 
-			case raw := <-ac.request: // 处理消息信封
+			case raw := <-ac.request: // 处理消息信封（同步串行）
 				env, ok := raw.(*Envelope)
 				if !ok {
 					logger.ERROR("unexpected message type in actor queue:", raw)
@@ -36,10 +35,15 @@ func (ac *ActorBase) loop() {
 				ac.handleEnvelope(env)
 			}
 		}
+
 	}()
 }
 
-// handleEnvelope 处理一条消息信封。
+// handleEnvelope 同步处理一条消息信封（单协程串行，无每消息 goroutine）。
+// handler panic 由 recoverHandler 隔离，不影响其他 actor；
+// RPC（MsgCall）未显式回复时兜底回 nil，避免调用方永久挂起。
+// handler 超时由看门狗（time.AfterFunc → onHandlerTimeout）兜底：置关闭、取消循环、
+// 通知 gameserver 踢线；单协程无法协作取消正在执行的 handler，待其返回后循环自然退出。
 func (ac *ActorBase) handleEnvelope(env *Envelope) {
 	ctx := &ActorContext{
 		manager: ac.manager,
@@ -48,36 +52,35 @@ func (ac *ActorBase) handleEnvelope(env *Envelope) {
 		env:     env,
 	}
 
-	handleCtx, cancel := context.WithTimeout(ac.ctx, HandlerTimeout)
-	defer cancel()
-	done := make(chan struct{})
+	// 看门狗：HandlerTimeout 内未处理完视为 actor 故障（踢线 + 关闭）
+	watchdog := time.AfterFunc(HandlerTimeout, func() { ac.onHandlerTimeout(ctx) })
+	defer watchdog.Stop()
 
-	go func() {
-		defer close(done)
-		defer func() {
-			if r := recover(); r != nil {
-				logger.ERROR("handler panic:", r, "actor:", ac.name)
-				replyCallError(ctx, fmt.Sprintf("handler panic: %v", r))
-			}
-		}()
-		ac.dispatch(env, ctx)
-		// RPC 兜底：handler 未显式回复时自动回 nil，避免调用方永久挂起
-		if env.Kind == MsgCall && ctx.replied.CompareAndSwap(false, true) {
-			env.Reply <- nil
-		}
-	}()
+	defer ac.recoverHandler(ctx)
+	ac.dispatch(env, ctx)
+	// RPC 兜底：handler 未显式回复时自动回 nil，避免调用方永久挂起
+	if env.Kind == MsgCall && ctx.replied.CompareAndSwap(false, true) {
+		env.Reply <- nil
+	}
+}
 
-	select {
-	case <-done:
-	case <-handleCtx.Done():
-		logger.ERROR("message handling timed out for actor:", ac.name)
-		replyCallError(ctx, "handler timeout")
-		// 超时视为 actor 故障：先置关闭阻止新投递，自停循环，并通知 gameserver 踢掉该玩家连接
-		ac.setState(StateClosed)
-		ac.cancel()
-		if ac.manager != nil {
-			ac.manager.notifyFault(ac.name)
-		}
+// onHandlerTimeout handler 处理超时：回复超时错误、置关闭阻止新投递、取消主循环，
+// 并通知 gameserver 踢掉该玩家连接（由看门狗回调触发）。
+func (ac *ActorBase) onHandlerTimeout(ctx *ActorContext) {
+	logger.ERROR("message handling timed out for actor:", ac.name)
+	replyCallError(ctx, "handler timeout")
+	ac.setState(StateClosed)
+	ac.cancel()
+	if ac.manager != nil {
+		ac.manager.notifyFault(ac.name)
+	}
+}
+
+// recoverHandler handler panic 隔离：记录日志并兜底回复调用方，不影响其他 actor。
+func (ac *ActorBase) recoverHandler(ctx *ActorContext) {
+	if r := recover(); r != nil {
+		logger.ERROR("handler panic:", r, "actor:", ac.name)
+		replyCallError(ctx, fmt.Sprintf("handler panic: %v", r))
 	}
 }
 
