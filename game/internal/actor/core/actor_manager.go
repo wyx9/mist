@@ -642,18 +642,12 @@ func (am *AManager) Deliver(uid int64, msg *protocol.Msg) error {
 }
 
 // Cast 向其他 actor 异步投递消息（业务消息，计入活动时间）。
-// 职责：路由。本地 Find 命中 → 直接投递；未命中 → 一次 owner 查询分流：
-//   - owner 在本节点或无记录（可认领）→ EnsureRunning 本地启动后投递（不经 gateway）；
-//   - owner 在他节点 → 远程路由，gateway 按 actor:loc 转发到 owner 节点；
-//   - 本地启动时位置刚被接管（ErrActorNotOwner）→ 回退远程路由（gateway 按最新位置转发）。
+// 职责：本地 Find 命中 → 直接投递；未命中 → 直接发 gateway（RemoteRouter），
+// 由 gateway 按 actor:loc 寻址转发到 owner 节点（owner 节点 SendLocal 按需启动/复活）。
+// 不查询位置、不本地创建/复活——寻址职责全部收敛在 gateway。
 func (am *AManager) Cast(to int64, from string, msg interface{}) error {
 	if ab := am.Find(to); ab != nil {
 		return am.deliver(ab, &Envelope{From: from, Kind: MsgSend, Payload: msg})
-	}
-	if am.ownerIsLocal(to) {
-		if ab, err := am.EnsureRunning(to, ""); err == nil {
-			return am.deliver(ab, &Envelope{From: from, Kind: MsgSend, Payload: msg})
-		}
 	}
 	if r := am.remoteRouterSnapshot(); r != nil {
 		return r.Cast(to, from, msg)
@@ -684,38 +678,17 @@ func (am *AManager) SendSystem(to int64, from string, msg interface{}) error {
 }
 
 // Call 向其他 actor 发起 RPC 并等待回复。
-// 职责：路由。本地 Find 命中 → 直接本地调用；未命中 → 一次 owner 查询分流：
-//   - owner 在本节点或无记录（可认领）→ EnsureRunning 本地启动后调用（不经 gateway）；
-//   - owner 在他节点 → 远程路由，gateway 按 actor:loc 转发到 owner 节点；
-//   - 本地启动时位置刚被接管（ErrActorNotOwner）→ 回退远程路由（gateway 按最新位置转发）。
+// 职责：本地 Find 命中 → 直接本地调用；未命中 → 直接发 gateway（RemoteRouter），
+// 由 gateway 按 actor:loc 寻址转发到 owner 节点（owner 节点 CallLocal 按需启动/复活）。
+// 不查询位置、不本地创建/复活——寻址职责全部收敛在 gateway。
 func (am *AManager) Call(to int64, from string, msg interface{}, timeout time.Duration) (interface{}, error) {
 	if ab := am.Find(to); ab != nil {
 		return am.callLocal(ab, to, from, msg, timeout)
-	}
-	if am.ownerIsLocal(to) {
-		if ab, err := am.EnsureRunning(to, ""); err == nil {
-			return am.callLocal(ab, to, from, msg, timeout)
-		}
 	}
 	if r := am.remoteRouterSnapshot(); r != nil {
 		return r.Call(to, from, msg, timeout)
 	}
 	return nil, ErrActorNotFound
-}
-
-// ownerIsLocal 判断本地 Find 未命中时是否应走本地启动：owner 在本节点或无记录（可认领）→ true。
-// 未注入位置表或查询失败 → false（保守走远程路由，由 gateway 再次解析）。
-// 这是 core 唯一的 owner 查询点（复用 LocationRegistry.IsOwner，不新增抽象）。
-func (am *AManager) ownerIsLocal(uid int64) bool {
-	reg := am.locationRegSnapshot()
-	if reg == nil {
-		return false
-	}
-	owner, err := reg.IsOwner(uid)
-	if err != nil {
-		return false
-	}
-	return owner
 }
 
 // CallLocal 本地 RPC（不带远程回退），owner 节点入口（供 rpc.Serve 调用）。

@@ -25,10 +25,54 @@ const (
 	linkPingInterval = 5 * time.Second
 	linkReadTimeout  = 15 * time.Second
 	handshakeTimeout = 5 * time.Second
+
+	// actorLocCacheTTL gateway 侧 actor 位置缓存有效期：缓存命中期内不查 Redis，
+	// 过期后回源并回填（actor 迁移/接管造成的 stale 最多持续一个 TTL）。
+	actorLocCacheTTL = 5 * time.Second
 )
 
 // gameLinks gateway 当前已连接的 game 长连接表 —— addr → *gameLink
 var gameLinks sync.Map
+
+// actorLocCache gateway 侧 actor 位置缓存：uid(int64) → cachedActorLoc。
+// RPC 寻址优先内存，未命中/过期回源 Redis actor:loc；节点失联时按 addr 清理。
+var actorLocCache sync.Map
+
+// cachedActorLoc 缓存的 actor 位置条目。
+type cachedActorLoc struct {
+	addr     string
+	expireAt time.Time
+}
+
+// resolveActorLoc 解析 actor 所在节点：优先内存缓存（TTL 内），未命中/过期查 Redis 并回填。
+func resolveActorLoc(ctx context.Context, rdb *redis.Client, uid int64) (string, bool, error) {
+	if v, ok := actorLocCache.Load(uid); ok {
+		c := v.(cachedActorLoc)
+		if time.Now().Before(c.expireAt) {
+			return c.addr, true, nil
+		}
+		actorLocCache.Delete(uid) // 过期：删缓存项回源
+	}
+	addr, found, err := registry.ResolveActorLoc(ctx, rdb, uid)
+	if err != nil {
+		return "", false, err
+	}
+	if found {
+		actorLocCache.Store(uid, cachedActorLoc{addr: addr, expireAt: time.Now().Add(actorLocCacheTTL)})
+	}
+	return addr, found, nil
+}
+
+// sweepActorLocCache 清理全部过期缓存项（由 gamePollLoop 周期调用，防长期堆积）。
+func sweepActorLocCache() {
+	now := time.Now()
+	actorLocCache.Range(func(k, v interface{}) bool {
+		if now.After(v.(cachedActorLoc).expireAt) {
+			actorLocCache.Delete(k)
+		}
+		return true
+	})
+}
 
 type handshakeResult struct {
 	ok    bool
@@ -65,11 +109,12 @@ func (l *gameLink) sendPing() error {
 	return l.writeFrame(codec.TunnelPing, "", nil)
 }
 
-// gamePollLoop 轮询注册表：连接新发现的 game，断开已消失的 game。
+// gamePollLoop 轮询注册表：连接新发现的 game，断开已消失的 game；顺带清理过期位置缓存。
 func gamePollLoop(rdb *redis.Client) {
 	ticker := time.NewTicker(gamePollInterval)
 	defer ticker.Stop()
 	for range ticker.C {
+		sweepActorLocCache()
 		addrs, err := registry.ListFresh(context.Background(), rdb)
 		if err != nil {
 			logger.ERROR("list game servers failed:", err)
@@ -169,8 +214,10 @@ func (l *gameLink) handleRPC(payload []byte) {
 }
 
 // routeRequest 解析目标 actor（按 uid）所在节点并转发请求；失败时回错误响应。
+// 寻址优先内存缓存（resolveActorLoc，未命中/过期回源 Redis actor:loc）；
+// 节点失联由 closeAllSessions 即时清缓存与 Redis 位置，故此处不做二次回源。
 func (l *gameLink) routeRequest(frame *pt.RpcFrame) {
-	addr, found, err := registry.ResolveActorLoc(context.Background(), l.rdb, frame.UID)
+	addr, found, err := resolveActorLoc(context.Background(), l.rdb, frame.UID)
 	if err != nil {
 		l.replyError(frame, "resolve actor location: "+err.Error())
 		return
@@ -260,6 +307,13 @@ func (l *gameLink) closeAllSessions() {
 	if l.rdb != nil {
 		registry.SweepActorLoc(context.Background(), l.rdb, l.addr)
 	}
+	// 同步清理指向该节点的位置缓存
+	actorLocCache.Range(func(k, v interface{}) bool {
+		if v.(cachedActorLoc).addr == l.addr {
+			actorLocCache.Delete(k)
+		}
+		return true
+	})
 	l.closed.Store(true)
 	gameLinks.Delete(l.addr)
 	_ = l.conn.Close()
