@@ -10,7 +10,7 @@ import (
 
 // actorLocRegistry 实现 core.LocationRegistry：把可路由 actor 的位置写入/删除 Redis（按 uid）。
 // 位置表是「已实例化 actor 及其节点」的权威登记，owner 边界由此强制执行：
-// Register 原子认领，Claim 强制接管，IsOwner 查询归属。
+// Register 原子认领，IsOwner 查询归属。（强制接管不在此接口内，握手路径直接用 SetActorLoc。）
 type actorLocRegistry struct {
 	srv *Server
 }
@@ -25,11 +25,6 @@ func (r *actorLocRegistry) Register(uid int64) error {
 		return core.ErrActorNotOwner
 	}
 	return nil
-}
-
-// Claim 强制接管位置（覆盖写）：跨节点迁移/重新登录时由握手路径调用。
-func (r *actorLocRegistry) Claim(uid int64) error {
-	return registry.SetActorLoc(context.Background(), redis.RedisClient, uid, r.srv.regAddr)
 }
 
 func (r *actorLocRegistry) Unregister(uid int64) error {
