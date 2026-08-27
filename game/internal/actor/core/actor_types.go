@@ -48,33 +48,12 @@ type Routable interface {
 	Routable()
 }
 
-// LocationRegistry 位置注册能力：由 gameserver 注入（Redis actor:loc，按 uid）。
-// 位置表是「已实例化 actor 及其所在节点」的权威登记（gateway 寻址的数据源）：
-//   - Register：原子认领，已被他节点占有时返回 ErrActorNotOwner（不覆盖）；
-//   - Unregister：彻底删除 actor 时清除位置；
-//   - IsOwner：查询位置是否归属本节点（无记录视为可认领，返回 true），
-//     供 Detach 孤儿检查与握手所有权校正使用。
-// （强制接管不走本接口：握手路径由 gameserver 直接 SetActorLoc 覆盖写。）
-type LocationRegistry interface {
-	Register(uid int64) error
-	Unregister(uid int64) error
-	IsOwner(uid int64) (bool, error)
-}
-
-// InitRegistry actor 初始化记录能力：由 gameserver 注入（Redis actor:init，uid -> category）。
-// 「该 uid 已初始化过」的判定以此为准，内存 knownActors 只是缓存，进程重启不丢。
-type InitRegistry interface {
-	Register(uid int64, category string) error
-	Unregister(uid int64) error
-	Category(uid int64) (string, bool, error)
-}
-
 // 定义错误常量
 var (
-	ErrActorNotFound = errors.New("actor not found")       // Actor 不存在
-	ErrActorClose    = errors.New("actor close")           // Actor 已关闭
-	ErrSendTimeout   = errors.New("send timeout")          // 发送超时
-	ErrSelfCall      = errors.New("self call not allowed") // 禁止 Actor 自调用（防止死锁）
+	ErrActorNotFound = errors.New("actor not found")              // Actor 不存在
+	ErrActorClose    = errors.New("actor close")                  // Actor 已关闭
+	ErrSendTimeout   = errors.New("send timeout")                 // 发送超时
+	ErrSelfCall      = errors.New("self call not allowed")        // 禁止 Actor 自调用（防止死锁）
 	ErrActorNotOwner = errors.New("actor not owned by this node") // 位置已被他节点占有，本节点非 owner
 )
 

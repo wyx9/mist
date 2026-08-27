@@ -1,7 +1,3 @@
-// internal/gameserver/server.go
-// Server 聚合根与全局单例：持有所有组件。
-// 职责拆分：网络接入见 network.go，配置见 config.go，持久化见 persist.go，
-// 隧道与消息处理见 tunnel.go、message.go，位置注册见 location.go。
 package gameserver
 
 import (
@@ -119,6 +115,14 @@ func (s *Server) Start(opts StartOptions) error {
 	}
 	configs.StartWatch()
 
+	// 本节点注册地址：须在启动任何 actor 前注入 AManager，供位置认领/注册使用。
+	addr := fmt.Sprintf("%s:%s", cfg.Listen.Addr, cfg.Listen.Port)
+	s.regAddr = cfg.RegisterAddr
+	if s.regAddr == "" {
+		s.regAddr = addr
+	}
+	s.ActorManner.SetAddr(s.regAddr)
+
 	// Phase 3: 业务初始化
 	controller.RegisterAll()
 	actor.RegisterAll(s.ActorManner)
@@ -144,17 +148,9 @@ func (s *Server) Start(opts StartOptions) error {
 	// Phase 4: 对外服务 (goroutine)
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 
-	addr := fmt.Sprintf("%s:%s", cfg.Listen.Addr, cfg.Listen.Port)
-	s.regAddr = cfg.RegisterAddr
-	if s.regAddr == "" {
-		s.regAddr = addr
-	}
-
 	// 内部 RPC 客户端：注入 actor 管理器（远程路由 + 位置注册 + 初始化记录）
 	s.rpcClient = rpc.NewClient(s.regAddr)
 	s.ActorManner.SetRemoteRouter(s.rpcClient)
-	s.ActorManner.SetLocationRegistry(&actorLocRegistry{srv: s})
-	s.ActorManner.SetInitRegistry(&actorInitRegistry{srv: s})
 
 	// 全局定时器轮询协程：每秒从 Redis 取到期任务投递给目标 actor
 	s.wg.Add(1)

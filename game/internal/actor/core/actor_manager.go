@@ -29,11 +29,10 @@ type AManager struct {
 	sched        *timer.Scheduler  // actor 内部内存定时调度器（惰性创建）
 	faultHandler func(name string) // actor 故障回调（handler 超时等），由 gameserver 设置
 	remoteRouter rpc.RemoteRouter  // 跨进程路由（本地未命中时委托），由 gameserver 注入
-	locationReg  LocationRegistry  // 可路由 actor 位置注册，由 gameserver 注入
-	initReg      InitRegistry      // actor 初始化记录（uid→category，Redis 持久化），由 gameserver 注入
 	sweeperCtx   context.Context
 	sweeperStop  context.CancelFunc
 	sweeperRun   bool
+	addr         string
 }
 
 // SetFaultHandler 注册 actor 故障回调（如 handler 超时），用于踢掉故障玩家的连接。
@@ -67,32 +66,18 @@ func (am *AManager) remoteRouterSnapshot() rpc.RemoteRouter {
 	return am.remoteRouter
 }
 
-// SetLocationRegistry 注册可路由 actor 的位置注册实现。
-func (am *AManager) SetLocationRegistry(r LocationRegistry) {
+// SetAddr 设置本节点注册地址，供位置注册/认领使用；须在启动任何 actor 前设置。
+func (am *AManager) SetAddr(addr string) {
 	am.mu.Lock()
 	defer am.mu.Unlock()
-	am.locationReg = r
+	am.addr = addr
 }
 
-// locationRegSnapshot 读取位置注册实现引用快照。
-func (am *AManager) locationRegSnapshot() LocationRegistry {
+// addrSnapshot 读取本节点注册地址快照。
+func (am *AManager) addrSnapshot() string {
 	am.mu.RLock()
 	defer am.mu.RUnlock()
-	return am.locationReg
-}
-
-// SetInitRegistry 注册 actor 初始化记录实现（Redis uid→category）。
-func (am *AManager) SetInitRegistry(r InitRegistry) {
-	am.mu.Lock()
-	defer am.mu.Unlock()
-	am.initReg = r
-}
-
-// initRegSnapshot 读取初始化记录实现引用快照。
-func (am *AManager) initRegSnapshot() InitRegistry {
-	am.mu.RLock()
-	defer am.mu.RUnlock()
-	return am.initReg
+	return am.addr
 }
 
 // RegisterFactory 注册某类 actor 的工厂（按需启动时使用）。
@@ -249,14 +234,18 @@ func (am *AManager) Add(ab *ActorBase) error {
 	ab.touchActivity()
 	am.actorMap.Store(ab.name, ab)
 	am.addToCategories(ab)
-	if err := am.registerLocation(ab); err != nil {
-		// 位置认领失败（已被他节点占有）：回滚刚创建的实例，避免残留双实例
-		am.remove(ab.id)
-		if serr := ab.Shutdown(CloseTimeout); serr != nil && !errors.Is(serr, ErrActorClose) {
-			logger.ERROR("rollback actor shutdown failed:", serr, "uid:", ab.id)
+	// 注册节点：仅可路由 actor 参与位置表，Room 等本地常驻 actor 跳过。
+	if _, ok := ab.iActor.(Routable); ok {
+		if err := am.RegisterAddr(ab.id); err != nil {
+			// 位置认领失败（已被他节点占有）：回滚刚创建的实例，避免残留双实例
+			am.remove(ab.id)
+			if serr := ab.Shutdown(CloseTimeout); serr != nil && !errors.Is(serr, ErrActorClose) {
+				logger.ERROR("rollback actor shutdown failed:", serr, "uid:", ab.id)
+			}
+			return err
 		}
-		return err
 	}
+
 	return nil
 }
 
@@ -275,31 +264,28 @@ func (am *AManager) remove(uid int64) {
 	am.removeFromCategories(ab)
 }
 
-// registerLocation 若 actor 可路由且已注入位置注册实现，则原子认领位置。
-// 认领失败（已被他节点占有）返回错误，由 Add 回滚刚创建的实例。
-func (am *AManager) registerLocation(ab *ActorBase) error {
-	if _, ok := ab.iActor.(Routable); !ok {
-		return nil
-	}
-	reg := am.locationRegSnapshot()
-	if reg == nil {
-		return nil
-	}
-	return reg.Register(ab.id)
-}
-
-// unregisterLocation 若 actor 可路由且已注入位置注册实现，则删除位置记录（彻底删除时用）。
+// unregisterLocation 若 actor 可路由，删除位置记录（彻底删除时用）。
 func (am *AManager) unregisterLocation(ab *ActorBase) {
 	if _, ok := ab.iActor.(Routable); !ok {
 		return
 	}
-	reg := am.locationRegSnapshot()
-	if reg == nil {
-		return
-	}
-	if err := reg.Unregister(ab.id); err != nil {
+	if err := am.UnregisterAddr(ab.id); err != nil {
 		logger.ERROR("unregister actor location failed:", err, "uid:", ab.id)
 	}
+}
+
+// isOrphan 判断本地 actor 是否已成孤儿：可路由且位置已不属于本节点。
+// 位置查询失败时视为非孤儿（不误关），等待其他路径兜底。
+func (am *AManager) isOrphan(ab *ActorBase) bool {
+	if _, ok := ab.iActor.(Routable); !ok {
+		return false
+	}
+	owner, err := am.IsOwner(ab.id)
+	if err != nil {
+		logger.ERROR("check actor ownership failed:", err, "uid:", ab.id)
+		return false
+	}
+	return !owner
 }
 
 // CloseActor 关闭指定 Actor：停止并记入 knownActors（保留位置表，供 RPC 按需复活）。
@@ -322,14 +308,14 @@ func (am *AManager) CloseActor(uid int64, timeout time.Duration) error {
 
 // DeleteActor 彻底删除 actor：关闭 + 清初始化记录（内存 + Redis）+ 清位置表。
 func (am *AManager) DeleteActor(uid int64, timeout time.Duration) error {
-	ab := am.Find(uid)
 	am.knownActors.Delete(uidKey(uid))
-	if reg := am.initRegSnapshot(); reg != nil {
-		_ = reg.Unregister(uid)
+	if err := am.UnregisterInit(uid); err != nil {
+		logger.ERROR("unregister actor init failed:", err, "uid:", uid)
 	}
+	ab := am.Find(uid)
 	if ab == nil {
-		if reg := am.locationRegSnapshot(); reg != nil {
-			_ = reg.Unregister(uid)
+		if err := am.UnregisterAddr(uid); err != nil {
+			logger.ERROR("unregister actor location failed:", err, "uid:", uid)
 		}
 		return nil
 	}
@@ -338,7 +324,7 @@ func (am *AManager) DeleteActor(uid int64, timeout time.Duration) error {
 }
 
 // EnsureRunning 确保 uid 对应 actor 已运行（本地/跨节点 RPC 按需启动的统一入口）。
-// 只允许 owner 节点调用：创建路径经位置原子认领（Add → registerLocation），
+// 只允许 owner 节点调用：创建路径经位置原子认领（Add 内可路由 actor 调 RegisterAddr），
 // 已被他节点占有时返回 ErrActorNotOwner 且不残留实例。
 // category 仅在所有记录（内存 knownActors / Redis actor:init）均未命中时使用。
 func (am *AManager) EnsureRunning(uid int64, category string) (*ActorBase, error) {
@@ -391,14 +377,12 @@ func (am *AManager) actorCategory(uid int64, fallback string) (string, error) {
 	if v, ok := am.knownActors.Load(key); ok {
 		return v.(string), nil
 	}
-	if reg := am.initRegSnapshot(); reg != nil {
-		cat, found, err := reg.Category(uid)
-		if err != nil {
-			return "", fmt.Errorf("query actor category failed: %w", err)
-		}
-		if found {
-			return cat, nil
-		}
+	cat, found, err := am.GetActorCategory(uid)
+	if err != nil {
+		return "", fmt.Errorf("query actor category failed: %w", err)
+	}
+	if found {
+		return cat, nil
 	}
 	return fallback, nil
 }
@@ -420,10 +404,8 @@ func (am *AManager) startByFactory(uid int64, category string) (*ActorBase, erro
 func (am *AManager) startNew(uid int64, category string, actor IActor) (*ActorBase, error) {
 	key := uidKey(uid)
 	am.knownActors.Store(key, category)
-	if reg := am.initRegSnapshot(); reg != nil {
-		if err := reg.Register(uid, category); err != nil {
-			logger.ERROR("register actor init failed:", err, "uid:", uid)
-		}
+	if err := am.RegisterInit(uid, category); err != nil {
+		logger.ERROR("register actor init failed:", err, "uid:", uid)
 	}
 	// 定时器句柄须在 NewActorBase（触发 Start）之前注入，保证 Start 内也能排定时器。
 	if p, ok := actor.(SetTimerHandle); ok {
@@ -518,24 +500,6 @@ func (am *AManager) Detach(uid int64) error {
 		logger.WARNING("detach send ConnDetached failed:", err, "uid:", uid)
 	}
 	return nil
-}
-
-// isOrphan 判断本地 actor 是否已成孤儿：可路由且位置已不属于本节点。
-// 位置查询失败时视为非孤儿（不误关），等待其他路径兜底。
-func (am *AManager) isOrphan(ab *ActorBase) bool {
-	if _, ok := ab.iActor.(Routable); !ok {
-		return false
-	}
-	reg := am.locationRegSnapshot()
-	if reg == nil {
-		return false
-	}
-	owner, err := reg.IsOwner(ab.id)
-	if err != nil {
-		logger.ERROR("check actor ownership failed:", err, "uid:", ab.id)
-		return false
-	}
-	return !owner
 }
 
 // Attach 重连唤醒休眠 actor：置运行并注入新连接；actor 已关闭时返回 ErrActorClose。
