@@ -33,7 +33,7 @@ func PlayerInfoController(ctx *route.HandlerContext[*actor.Player], req *pt.Play
 }
 
 // PlayerInfoInternalHandler 返回当前玩家自己的信息快照（内部 RPC 处理端，
-// 注册为 "player.get_info"；目标 actor 收到请求后回自己的 uid/name/在线状态）。
+// 注册键为请求消息名 PlayerInfoReq；目标 actor 收到请求后回自己的 uid/name/在线状态）。
 func PlayerInfoInternalHandler(ctx *rpc.HandlerContext[*actor.Player], req *pt.PlayerInfoReq) (*pt.PlayerInfoRes, error) {
 	p := ctx.Actor
 	return &pt.PlayerInfoRes{

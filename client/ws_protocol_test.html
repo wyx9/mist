@@ -109,8 +109,8 @@
       <li>准备后端：redis / mysql → <code>webapi</code> → <code>gateway</code> → <code>game</code></li>
       <li>填写玩家名 / 密码 → 点「登录 WebAPI」→ 自动拿到 token 并填入 gateway 地址</li>
       <li>点「连接」→ 自动握手（发送 <code>{"token","version"}</code>）→ 收到 <code>{"status":"ok"}</code></li>
-      <li>自动发送登录 <code>CmdLogin</code>，可手动重发 / 心跳 / 自定义消息</li>
-      <li>新增协议：在脚本 <code>CMDS</code> / <code>BODY_SCHEMAS</code> 登记即可复用本页测试</li>
+      <li>自动发送登录 <code>LoginReq</code>，可手动重发 / 心跳 / 自定义消息</li>
+      <li>新增协议：在脚本 <code>MESSAGES</code> / <code>BODY_SCHEMAS</code> 登记即可复用本页测试</li>
     </ol>
   </details>
 
@@ -150,7 +150,7 @@
     <div class="row">
       <label class="chk"><input type="checkbox" id="chkAutoLogin" checked> 握手后自动登录</label>
     </div>
-    <button class="btn-primary" onclick="sendLogin()">发送登录 CmdLogin</button>
+    <button class="btn-primary" onclick="sendLogin()">发送登录 (LoginReq)</button>
   </section>
 
   <h2>心跳</h2>
@@ -164,7 +164,7 @@
   <h2>Chat</h2>
   <section>
     <div><label>消息内容</label><input id="chatMsg" placeholder="输入聊天内容"></div>
-    <button class="btn-primary" onclick="sendChat()">发送 Chat (CmdSendChat)</button>
+    <button class="btn-primary" onclick="sendChat()">发送 Chat (SendChatReq)</button>
   </section>
 
   <h2>自定义消息（复用）</h2>
@@ -177,12 +177,12 @@
           <option value="3">3 Push 推送</option>
         </select>
       </div>
-      <div><label>命令号</label>
+      <div><label>预设消息</label>
         <select id="cmdSel"></select>
       </div>
     </div>
     <div class="row">
-      <div><label>cmd (数字)</label><input id="cmdNum" value="1" type="number"></div>
+      <div><label>消息名</label><input id="cmdNum" value="LoginReq"></div>
       <div><label>msgID</label><input id="custMsgID" value="1" type="number"></div>
       <div><label>UID</label><input id="custUID" value="12312312" type="number"></div>
     </div>
@@ -297,20 +297,21 @@ function skipField(u8, pos, wire) {
 }
 
 // 信封 Msg：1=msg_type(varint) 2=msg_id(varint) 3=uid(varint)
-//           4=token(string) 5=cmd(varint) 6=body(bytes)
+//           4=token(string) 5=name(string) 6=body(bytes)
+// name 为业务 Protobuf 消息名（如 LoginReq / LoginRes），服务端按名称反射路由
 function encodeMsg(m) {
   const parts = [];
   if (m.msgType) parts.push(tagBytes(1, 0), varintBytes(m.msgType));
   if (m.msgID) parts.push(tagBytes(2, 0), varintBytes(m.msgID));
   if (m.uid) parts.push(tagBytes(3, 0), varintBytes(m.uid));
   if (m.token) parts.push(tagBytes(4, 2), strFieldBytes(m.token));
-  if (m.cmd) parts.push(tagBytes(5, 0), varintBytes(m.cmd));
+  if (m.name) parts.push(tagBytes(5, 2), strFieldBytes(m.name));
   if (m.body && m.body.length) parts.push(tagBytes(6, 2), bytesField(m.body));
   return concatBytes(parts);
 }
 
 function decodeMsg(u8) {
-  const m = { msgType: 0, msgID: 0, uid: 0, token: '', cmd: 0, body: new Uint8Array(0) };
+  const m = { msgType: 0, msgID: 0, uid: 0, token: '', name: '', body: new Uint8Array(0) };
   let pos = 0;
   while (pos < u8.length) {
     const tag = readVarint(u8, pos);
@@ -335,8 +336,8 @@ function decodeMsg(u8) {
         const v = readString(u8, pos); pos = v.pos; m.token = v.value; break;
       }
       case 5: {
-        if (wire !== 0) throw new Error('字段5 期望 varint');
-        const v = readVarint(u8, pos); pos = v.pos; m.cmd = v.value; break;
+        if (wire !== 2) throw new Error('字段5 期望 string');
+        const v = readString(u8, pos); pos = v.pos; m.name = v.value; break;
       }
       case 6: {
         if (wire !== 2) throw new Error('字段6 期望 bytes');
@@ -358,6 +359,12 @@ const BODY_SCHEMAS = {
   SendChatReq: { fields: [['UUid', 1, 'int64'], ['Msg', 2, 'string']] },
   SendChatRsp: { fields: [['UUid', 1, 'int64']] },
   ChatNtf: { fields: [['UUid', 1, 'int64'], ['Msg', 2, 'string']] },
+  LobbyInfoReq: { fields: [] },
+  LobbyInfoRes: { fields: [['Online', 1, 'int32']] },
+  ChatHistoryReq: { fields: [] },
+  ChatHistoryRes: { fields: [] },
+  PlayerInfoReq: { fields: [['UUid', 1, 'int64']] },
+  PlayerInfoRes: { fields: [['UUid', 1, 'int64'], ['Name', 2, 'string'], ['Online', 3, 'int32'], ['LastLoginAt', 4, 'int64']] },
 };
 
 function encodeBody(typeName, obj) {
@@ -402,27 +409,20 @@ function decodeBody(typeName, u8) {
   return out;
 }
 
-// 命令号登记表：新增协议在这里加一行即可复用
-const CMDS = [
-  { cmd: 1, name: 'CmdLogin', req: 'LoginReq', rsp: 'LoginRes' },
-  { cmd: 2, name: 'CmdLoginRsp', req: null, rsp: 'LoginRes' },
-  { cmd: 3, name: 'CmdHeart', req: 'HeartReq', rsp: 'HeartRes' },
-  { cmd: 4, name: 'CmdHeartRsp', req: null, rsp: 'HeartRes' },
-  { cmd: 5, name: 'CmdSendChat', req: 'SendChatReq', rsp: 'SendChatRsp' },
-  { cmd: 6, name: 'CmdSendChatRsp', req: null, rsp: 'SendChatRsp' },
-  { cmd: 100, name: 'CmdChatPush', req: null, rsp: 'ChatNtf' },
-  { cmd: 0xffff, name: 'CmdError', req: null, rsp: 'ErrorRes' },
+// 协议消息登记表：新增协议在这里加一行即可复用（路由键 = Protobuf 消息名）
+const MESSAGES = [
+  { name: 'LoginReq' },
+  { name: 'HeartReq' },
+  { name: 'SendChatReq' },
+  { name: 'LobbyInfoReq' },
+  { name: 'ChatHistoryReq' },
+  { name: 'PlayerInfoReq' },
 ];
 const TYPE_NAMES = { 1: 'Req', 2: 'Rsp', 3: 'Push' };
 
-function cmdName(cmd) {
-  const c = CMDS.find(x => x.cmd === cmd);
-  return c ? c.name : 'Cmd_' + cmd;
-}
-function bodyTypeFor(cmd, msgType) {
-  const c = CMDS.find(x => x.cmd === cmd);
-  if (!c) return null;
-  return msgType === 2 ? c.rsp : (msgType === 1 ? c.req : (c.rsp || c.req));
+// 信封已携带消息名，body 类型即消息名；未登记 schema 的消息只显示 HEX
+function bodyTypeFor(name) {
+  return BODY_SCHEMAS[name] ? name : null;
 }
 
 function hexStr(u8) {
@@ -468,6 +468,9 @@ const SAMPLES = {
   ErrorRes: { Code: 1, Msg: 'error message' },
   SendChatReq: { UUid: 12312312, Msg: 'hello' },
   SendChatRsp: { UUid: 12312312 },
+  LobbyInfoReq: {},
+  ChatHistoryReq: {},
+  PlayerInfoReq: { UUid: 12312312 },
 };
 
 function nextMsgID() { return ++seq; }
@@ -489,7 +492,7 @@ function addLog(kind, html) {
 function fmtMsg(m, dir, label, matchText) {
   const tname = TYPE_NAMES[m.msgType] || ('Type' + m.msgType);
   const arrow = dir === 'sent' ? '↑' : '↓';
-  const btype = bodyTypeFor(m.cmd, m.msgType);
+  const btype = bodyTypeFor(m.name);
   let bodyHtml = '';
   if (btype) {
     try {
@@ -499,14 +502,14 @@ function fmtMsg(m, dir, label, matchText) {
       bodyHtml = '<div class="kv err-text">body 解码失败: ' + esc(e.message) + '</div>';
     }
   } else if (m.body.length) {
-    bodyHtml = '<div class="kv err-text">该命令未登记消息体类型，仅显示 HEX</div>';
+    bodyHtml = '<div class="kv err-text">该消息未登记 body schema，仅显示 HEX</div>';
   }
   const labelHtml = label ? ' <span class="label">' + esc(label) + '</span>' : '';
   const matchHtml = matchText ? ' <span class="match">✓ ' + esc(matchText) + '</span>' : '';
   const tokenHtml = m.token ? ' token=<b>' + esc(m.token) + '</b>' : '';
   return '<span class="arrow">' + arrow + '</span><b>' + (dir === 'sent' ? '发送' : '收到') + '</b>' + labelHtml +
     ' <span class="pill t' + m.msgType + '">' + tname + '</span>' +
-    ' <span class="cmd">' + esc(cmdName(m.cmd)) + '(' + m.cmd + ')</span>' +
+    ' <span class="cmd">' + esc(m.name || '?') + '</span>' +
     ' msgID=<b>' + m.msgID + '</b> uid=<b>' + m.uid + '</b>' + tokenHtml +
     ' 字节=<b>' + m.body.length + '</b>' + matchHtml +
     '<details><summary>详情 / HEX</summary>' +
@@ -667,7 +670,7 @@ function sendMsg(m, label) {
   try { bytes = encodeMsg(m); } catch (e) { addLog('error', '编码失败: ' + esc(e.message)); return; }
   ws.send(bytes);
   sentCount++;
-  if (m.msgType === 1) pending.set(m.msgID, cmdName(m.cmd));
+  if (m.msgType === 1) pending.set(m.msgID, m.name || '?');
   addLog('sent', fmtMsg(m, 'sent', label));
   updateStats();
 }
@@ -686,7 +689,7 @@ function sendLogin() {
     msgType: 1,
     msgID: nextMsgID(),
     uid: uid,
-    cmd: 1,
+    name: 'LoginReq',
     body: body,
   }, '登录');
 }
@@ -698,7 +701,7 @@ function sendHeartbeat() {
     msgID: nextMsgID(),
     uid: uid,
     token: '',
-    cmd: 3,
+    name: 'HeartReq',
     body: new Uint8Array(0),
   }, '心跳');
 }
@@ -715,7 +718,7 @@ function sendChat() {
     msgType: 1,
     msgID: nextMsgID(),
     uid: uid,
-    cmd: 5,
+    name: 'SendChatReq',
     body: body,
   }, 'Chat');
   chatMsg.value = '';
@@ -723,8 +726,8 @@ function sendChat() {
 
 function sendCustom() {
   const msgType = parseInt(msgTypeSel.value) || 1;
-  const cmd = parseInt(cmdNum.value);
-  if (!Number.isFinite(cmd) || cmd < 0) { addLog('error', '命令号非法'); return; }
+  const name = (cmdNum.value || '').trim();
+  if (!name) { addLog('error', '消息名不能为空'); return; }
   const uid = parseInt(custUID.value) || 0;
   const msgID = parseInt(custMsgID.value) || nextMsgID();
   let body;
@@ -733,11 +736,10 @@ function sendCustom() {
       body = parseHex(bodyHex.value);
     } else {
       const obj = JSON.parse(bodyJson.value || '{}');
-      const btype = bodyTypeFor(cmd, msgType) || 'HeartReq';
-      body = encodeBody(btype, obj);
+      body = BODY_SCHEMAS[name] ? encodeBody(name, obj) : new Uint8Array(0);
     }
   } catch (e) { addLog('error', 'body 处理失败: ' + esc(e.message)); return; }
-  sendMsg({ msgType, msgID, uid, cmd, body }, '自定义');
+  sendMsg({ msgType, msgID, uid, name, body }, '自定义');
 }
 
 function parseHex(s) {
@@ -842,14 +844,10 @@ function loadSample(btype) {
 }
 
 function onCmdSelect() {
-  const val = parseInt(cmdSel.value);
-  if (!Number.isFinite(val)) return;
+  const val = cmdSel.value;
+  if (!val) return;
   cmdNum.value = val;
-  const c = CMDS.find(x => x.cmd === val);
-  if (!c) return;
-  if (c.req && !c.rsp) msgTypeSel.value = '1';
-  const btype = c.req || c.rsp;
-  if (btype) loadSample(btype);
+  loadSample(val);
 }
 
 function toggleBodyMode() {
@@ -859,10 +857,10 @@ function toggleBodyMode() {
 
 // ── 初始化 ──
 function init() {
-  for (const c of CMDS) {
+  for (const m of MESSAGES) {
     const opt = document.createElement('option');
-    opt.value = c.cmd;
-    opt.textContent = c.name + ' (' + c.cmd + ')';
+    opt.value = m.name;
+    opt.textContent = m.name;
     cmdSel.appendChild(opt);
   }
   onCmdSelect();
@@ -880,7 +878,7 @@ function init() {
 }
 
 init();
-// 自动心跳默认开启（连接后每 3s 发一次 CmdHeart）
+// 自动心跳默认开启（连接后每 3s 发一次 HeartReq）
 autoHbTimer = setInterval(sendHeartbeat, 3000);
 btnAutoHb.textContent = '自动心跳: 开';
 btnAutoHb.style.background = 'var(--green)';

@@ -24,10 +24,10 @@ func HandleClientMsg[A any](actor A, actx *ActorContext, msg interface{}) {
 		Comm:  actx,
 	}, m)
 	if err != nil {
-		logger.ERROR("route error:", m.Cmd, err)
+		logger.ERROR("route error:", m.Name, err)
 		return
 	}
-	logger.DEBUG("req cmd :", m.Cmd, "msg id:", m.MsgID, "uid:", m.UID)
+	logger.DEBUG("req msg :", m.Name, "msg id:", m.MsgID, "uid:", m.UID)
 	if rsp == nil {
 		return
 	}
@@ -38,9 +38,9 @@ func HandleClientMsg[A any](actor A, actx *ActorContext, msg interface{}) {
 	}
 	if w, ok := any(actor).(route.ClientWriter); ok {
 		if err := w.WriteMessage(out); err != nil {
-			logger.ERROR("write response error:", err, "cmd:", m.Cmd)
+			logger.ERROR("write response error:", err, "msg:", m.Name)
 		}
 		return
 	}
-	logger.WARNING("actor has no WriteMessage, response dropped, cmd:", m.Cmd)
+	logger.WARNING("actor has no WriteMessage, response dropped, msg:", m.Name)
 }

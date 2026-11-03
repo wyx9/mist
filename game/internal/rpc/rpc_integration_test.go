@@ -111,14 +111,14 @@ func TestRemoteCallAndSend(t *testing.T) {
 	}
 
 	// 同步（Call）handler
-	rpc.RegisterCall[*testActor, *pt.RoomGetPlayersReq, *pt.RoomGetPlayersRes]("test.echo", "test",
+	rpc.RegisterCall[*testActor, *pt.RoomGetPlayersReq, *pt.RoomGetPlayersRes]("test",
 		func(ctx *rpc.HandlerContext[*testActor], req *pt.RoomGetPlayersReq) (*pt.RoomGetPlayersRes, error) {
 			return &pt.RoomGetPlayersRes{Players: []*pt.RoomPlayerInfo{{UID: 42, Name: "echo"}}}, nil
 		})
 
 	// 异步（Cast）handler
 	noted := make(chan string, 1)
-	rpc.Register[*testActor, *pt.RoomPlayerJoin]("test.note", "test",
+	rpc.Register[*testActor, *pt.RoomPlayerJoin]("test",
 		func(ctx *rpc.HandlerContext[*testActor], req *pt.RoomPlayerJoin) error {
 			noted <- "ok"
 			return nil

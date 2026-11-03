@@ -121,8 +121,8 @@ class WsClient {
       if (!entry) return;
       this.pending.delete(m.msgID);
       clearTimeout(entry.timer);
-      const body = decodeBodyFor(m.cmd, m.msgType, m.body) || {};
-      if (m.cmd === 65535) {
+      const body = decodeBody(m.name, m.body) || {};
+      if (m.name === 'ErrorRes') {
         entry.reject(new Error('服务器错误: ' + (body.Msg || 'code ' + body.Code)));
         return;
       }
@@ -130,34 +130,34 @@ class WsClient {
       return;
     }
     if (m.msgType === 3) {
-      const body = decodeBodyFor(m.cmd, m.msgType, m.body);
-      if (this.opts.onPush) this.opts.onPush(m.cmd, body || {});
+      const body = decodeBody(m.name, m.body);
+      if (this.opts.onPush) this.opts.onPush(m.name, body || {});
     }
   }
 
-  sendReq(cmd, bodyType, bodyObj, opts) {
+  sendReq(name, bodyObj, opts) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      if (cmd !== 3) this.addLog('err', '发送失败（未连接）cmd=' + cmd);
+      if (name !== 'HeartReq') this.addLog('err', '发送失败（未连接）name=' + name);
       return Promise.reject(new Error('未连接'));
     }
     const msgID = ++this.seq;
-    const body = bodyType ? encodeMessage(bodyType, bodyObj || {}) : new Uint8Array(0);
+    const body = encodeMessage(name, bodyObj || {});
     const bytes = encodeEnvelope({
       msgType: 1,
       msgID,
       uid: (opts && opts.uid !== undefined) ? opts.uid : this.uid,
-      cmd,
+      name,
       body,
     });
     this.ws.send(bytes);
-    this.logSend(cmd, msgID, bodyType, bodyObj);
+    this.logSend(name, msgID, bodyObj);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(msgID);
-        if (cmd !== 3) this.addLog('err', '请求超时 cmd=' + cmd + ' msgID=' + msgID);
-        reject(new Error('请求超时 cmd=' + cmd));
+        if (name !== 'HeartReq') this.addLog('err', '请求超时 name=' + name + ' msgID=' + msgID);
+        reject(new Error('请求超时 name=' + name));
       }, (opts && opts.timeoutMs) || 8000);
-      this.pending.set(msgID, { cmd, resolve, reject, timer });
+      this.pending.set(msgID, { name, resolve, reject, timer });
     });
   }
 
@@ -172,7 +172,7 @@ class WsClient {
   }
 
   ping() {
-    this.sendReq(3, 'HeartReq', {}, { timeoutMs: 6000 })
+    this.sendReq('HeartReq', {}, { timeoutMs: 6000 })
       .then(() => { if (this.opts.onHeartbeat) this.opts.onHeartbeat(true); })
       .catch(() => { if (this.opts.onHeartbeat) this.opts.onHeartbeat(false); });
   }
@@ -231,7 +231,7 @@ class WsClient {
   addLog(kind, text, extra) {
     const heartbeat = extra && extra.heartbeat !== undefined
       ? !!extra.heartbeat
-      : (text.indexOf('CmdHeart(') !== -1 || text.indexOf('CmdHeartRsp(') !== -1);
+      : (text.indexOf('HeartReq ') !== -1 || text.indexOf('HeartRes ') !== -1);
     const entry = Object.assign({ ts: new Date(), kind, text }, { heartbeat });
     this.log.push(entry);
     if (this.log.length > this.logLimit) this.log.splice(0, this.log.length - this.logLimit);
@@ -242,25 +242,26 @@ class WsClient {
     this.log.length = 0;
   }
 
-  // 发送日志：心跳（CmdHeart=3）不记录
-  logSend(cmd, msgID, bodyType, bodyObj) {
-    const name = CMDS[cmd] ? CMDS[cmd].name : 'Cmd_' + cmd;
+  // 发送日志：心跳（HeartReq）不记录
+  logSend(name, msgID, bodyObj) {
     const bodyText = bodyObj !== undefined && bodyObj !== null ? safeStringify(bodyObj) : '';
-    this.addLog('send', '↑ ' + name + '(' + cmd + ') msgID=' + msgID + (bodyText ? ' body=' + bodyText : ''));
+    this.addLog('send', '↑ ' + name + ' msgID=' + msgID + (bodyText ? ' body=' + bodyText : ''),
+      { heartbeat: name === 'HeartReq' });
   }
 
-  // 接收日志：心跳响应（CmdHeartRsp=4）不记录
+  // 接收日志：心跳响应（HeartRes）不记录
   logRecv(m) {
-    const name = CMDS[m.cmd] ? CMDS[m.cmd].name : 'Cmd_' + m.cmd;
-    const body = decodeBodyFor(m.cmd, m.msgType, m.body);
+    const name = m.name || '?';
+    const body = decodeBody(m.name, m.body);
     const bodyText = body !== null ? safeStringify(body) : (m.body.length ? '（未登记）' : '');
-    if (m.cmd === 65535) {
-      this.addLog('err', '↓ CmdError' + (bodyText ? ' body=' + bodyText : ''));
+    if (m.name === 'ErrorRes') {
+      this.addLog('err', '↓ ErrorRes' + (bodyText ? ' body=' + bodyText : ''));
       return;
     }
     const tname = m.msgType === 2 ? 'Rsp' : (m.msgType === 3 ? 'Push' : 'Type' + m.msgType);
     const uidText = m.uid ? (' uid=' + (typeof m.uid === 'bigint' ? m.uid.toString() : m.uid)) : '';
-    this.addLog('recv', '↓ ' + tname + ' ' + name + '(' + m.cmd + ') msgID=' + m.msgID + uidText + (bodyText ? ' body=' + bodyText : ''));
+    this.addLog('recv', '↓ ' + tname + ' ' + name + ' msgID=' + m.msgID + uidText + (bodyText ? ' body=' + bodyText : ''),
+      { heartbeat: m.name === 'HeartRes' });
   }
 
   emitStatus() {

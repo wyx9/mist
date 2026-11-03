@@ -1,6 +1,6 @@
 // Package protocol 定义业务消息的信封结构体与命令号。
-// 逻辑消息为 protobuf 信封 Msg（含消息类型/消息 ID/uid/token/cmd/body），
-// TCP 传输层外套 4B 长度头，WS 直接以二进制帧承载。
+// 逻辑消息为 protobuf 信封 Msg（含消息类型/消息 ID/uid/token/消息名/body），
+// 路由键为业务消息名（Protobuf 消息名），TCP 传输层外套 4B 长度头，WS 直接以二进制帧承载。
 package protocol
 
 import (
@@ -26,7 +26,7 @@ type Msg struct {
 	MsgID   uint64  // 消息 ID：客户端生成递增，服务端响应原样回填
 	UID     int64   // 玩家 uid：登录时绑定，后续消息携带
 	Token   string  // 认证 token：登录消息必带，其余消息可选携带
-	Cmd     uint16  // 业务命令号：CmdLogin / CmdHeart 等
+	Name    string  // 业务消息名：Protobuf 消息名，如 LoginReq / LoginRes（反射路由键）
 	Body    []byte  // 业务 protobuf 消息体
 }
 
@@ -36,7 +36,7 @@ const (
 	fieldMsgID   protowire.Number = 2 // varint: msg_id
 	fieldUID     protowire.Number = 3 // varint: uid (int64)
 	fieldToken   protowire.Number = 4 // string: token
-	fieldCmd     protowire.Number = 5 // varint: cmd
+	fieldName    protowire.Number = 5 // string: name（业务消息名）
 	fieldBody    protowire.Number = 6 // bytes: body
 )
 
@@ -66,9 +66,9 @@ func EncodeMsg(m *Msg) ([]byte, error) {
 		b = protowire.AppendTag(b, fieldToken, protowire.BytesType)
 		b = protowire.AppendString(b, m.Token)
 	}
-	if m.Cmd != 0 {
-		b = protowire.AppendTag(b, fieldCmd, protowire.VarintType)
-		b = protowire.AppendVarint(b, uint64(m.Cmd))
+	if m.Name != "" {
+		b = protowire.AppendTag(b, fieldName, protowire.BytesType)
+		b = protowire.AppendString(b, m.Name)
 	}
 	if len(m.Body) > 0 {
 		b = protowire.AppendTag(b, fieldBody, protowire.BytesType)
@@ -116,12 +116,12 @@ func DecodeMsg(data []byte) (*Msg, error) {
 			}
 			m.Token = v
 			data = data[n:]
-		case fieldCmd:
-			v, n := protowire.ConsumeVarint(data)
+		case fieldName:
+			v, n := protowire.ConsumeString(data)
 			if n < 0 {
-				return nil, fmt.Errorf("%w: cmd: %v", ErrInvalidWire, protowire.ParseError(n))
+				return nil, fmt.Errorf("%w: name: %v", ErrInvalidWire, protowire.ParseError(n))
 			}
-			m.Cmd = uint16(v)
+			m.Name = v
 			data = data[n:]
 		case fieldBody:
 			v, n := protowire.ConsumeBytes(data)

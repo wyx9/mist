@@ -53,12 +53,12 @@ func (c *HandlerContext[A]) Token() string {
 	return c.Msg.Token
 }
 
-// Cmd 返回当前消息命令号。
-func (c *HandlerContext[A]) Cmd() uint16 {
+// Name 返回当前消息的业务消息名（Protobuf 消息名）。
+func (c *HandlerContext[A]) Name() string {
 	if c.Msg == nil {
-		return 0
+		return ""
 	}
-	return c.Msg.Cmd
+	return c.Msg.Name
 }
 
 // ClientWriter 具备向客户端写消息能力的 actor（如 *actor.Player 持有连接）。
@@ -67,16 +67,21 @@ type ClientWriter interface {
 }
 
 // Push 服务端主动向当前玩家客户端推送消息（MsgTypePush）。
+// 推送帧的消息名由 msg 的类型反射得到，无需命令号。
 // 只能在 actor 串行循环内调用（controller handler 满足），写入无锁竞争；
 // actor 不具备写连接能力时返回错误。
-func (c *HandlerContext[A]) Push(cmd uint16, msg proto.Message) error {
+func (c *HandlerContext[A]) Push(msg proto.Message) error {
+	name := MessageName(msg)
+	if name == "" {
+		return fmt.Errorf("push message name empty: %T", msg)
+	}
 	body, err := proto.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("push marshal: %w", err)
 	}
 	out, err := protocol.EncodeMsg(&protocol.Msg{
 		MsgType: protocol.MsgTypePush,
-		Cmd:     cmd,
+		Name:    name,
 		UID:     c.UID(),
 		Body:    body,
 	})
@@ -88,6 +93,15 @@ func (c *HandlerContext[A]) Push(cmd uint16, msg proto.Message) error {
 		return errors.New("actor does not support client push")
 	}
 	return w.WriteMessage(out)
+}
+
+// MessageName 返回 Protobuf 消息名（如 LoginReq），即路由键与信封 Name 的取值。
+// 本仓库 proto 生成的 Go 类型名与消息名一致；nil 消息返回空串。
+func MessageName(m proto.Message) string {
+	if m == nil {
+		return ""
+	}
+	return reflect.TypeOf(m).Elem().Name()
 }
 
 // unmarshalError 标记 body 反序列化失败，供 Route 区分 BadRequest / ServerError。
@@ -106,25 +120,32 @@ func (e *contextMismatchError) Unwrap() error { return e.err }
 type dispatchFunc func(ctx any, msg *protocol.Msg) (proto.Message, error)
 
 type routeEntry struct {
-	resCmd uint16
-	name   string
+	name   string // 业务消息名（Protobuf 消息名），即注册键
 	handle dispatchFunc
 }
 
-var routes = map[uint16]routeEntry{}
+var routes = map[string]routeEntry{}
 
 // Register 泛型注册入口：A 为 actor 具体类型（如 *actor.Player / *actor.Room），
-// T 为请求消息类型；handler 收到类型化的 HandlerContext[A] 与已反序列化的 T。
-// 响应命令号由 protocol.ReqRsp 绑定表决定；命令号重复注册会直接 panic。
-func Register[A any, T proto.Message](reqCmd uint16, h func(ctx *HandlerContext[A], req T) (proto.Message, error)) {
+// T 为请求消息类型。路由键由 T 反射得到（Protobuf 消息名），无需命令号：
+//
+//	route.Register[*actor.Player, *pt.LoginReq](LoginController)
+//
+// handler 收到类型化的 HandlerContext[A] 与已反序列化的 T，返回响应消息；
+// 响应消息名由返回值类型反射得到，因此不维护请求→响应配对表。
+// 消息名重复注册会直接 panic（跨 proto 包同名消息在注册期暴露）。
+func Register[A any, T proto.Message](h func(ctx *HandlerContext[A], req T) (proto.Message, error)) {
 	var zero T
 	typ := reflect.TypeOf(zero).Elem()
-	if _, ok := routes[reqCmd]; ok {
-		panic(fmt.Sprintf("duplicate route cmd: %d", reqCmd))
+	name := typ.Name()
+	if name == "" {
+		panic(fmt.Sprintf("empty message name: %T", zero))
 	}
-	routes[reqCmd] = routeEntry{
-		resCmd: protocol.RspCmd(reqCmd),
-		name:   typ.Name(),
+	if _, ok := routes[name]; ok {
+		panic(fmt.Sprintf("duplicate route name: %s", name))
+	}
+	routes[name] = routeEntry{
+		name: name,
 		handle: func(ctx any, msg *protocol.Msg) (proto.Message, error) {
 			hctx, ok := ctx.(*HandlerContext[A])
 			if !ok {
@@ -141,10 +162,10 @@ func Register[A any, T proto.Message](reqCmd uint16, h func(ctx *HandlerContext[
 	}
 }
 
-// Route 按消息信封分发，返回组装好的响应信封。
-// 成功：MsgType=Rsp、Cmd=resCmd、MsgID/UID 原样回填；
-// handler 出错 / body 反序列化失败 / panic：记日志并返回 CmdError + pt.ErrorRes 响应；
-// nil msg / 未知 cmd / actor 类型不匹配：返回 error，不下发响应。
+// Route 按消息信封的 Name 分发，返回组装好的响应信封。
+// 成功：MsgType=Rsp、Name=响应消息名（handler 返回值的类型反射得到）、MsgID/UID 原样回填；
+// handler 出错 / body 反序列化失败 / panic：记日志并返回 Name=ErrorRes + pt.ErrorRes 响应；
+// nil msg / 未知消息名 / actor 类型不匹配：返回 error，不下发响应。
 func Route(ctx any, msg *protocol.Msg) (rsp *protocol.Msg, err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -156,9 +177,9 @@ func Route(ctx any, msg *protocol.Msg) (rsp *protocol.Msg, err error) {
 	if msg == nil {
 		return nil, errors.New("nil message")
 	}
-	entry, ok := routes[msg.Cmd]
+	entry, ok := routes[msg.Name]
 	if !ok {
-		return nil, errors.New("not found handler")
+		return nil, fmt.Errorf("not found handler: %s", msg.Name)
 	}
 	res, err := entry.handle(ctx, msg)
 	if err != nil {
@@ -166,7 +187,7 @@ func Route(ctx any, msg *protocol.Msg) (rsp *protocol.Msg, err error) {
 		if errors.As(err, &ce) {
 			return nil, err
 		}
-		logger.ERROR("handle error:", msg.Cmd, err)
+		logger.ERROR("handle error:", msg.Name, err)
 		var ue *unmarshalError
 		if errors.As(err, &ue) {
 			return errorRsp(msg, protocol.CodeBadRequest, ue.Error()), nil
@@ -178,24 +199,33 @@ func Route(ctx any, msg *protocol.Msg) (rsp *protocol.Msg, err error) {
 	}
 	body, err := proto.Marshal(res)
 	if err != nil {
-		logger.ERROR("marshal response error:", msg.Cmd, err)
+		logger.ERROR("marshal response error:", msg.Name, err)
 		return errorRsp(msg, protocol.CodeServerError, err.Error()), nil
+	}
+	resName := MessageName(res)
+	if resName == "" {
+		logger.ERROR("response message name empty:", fmt.Sprintf("%T", res), "req:", msg.Name)
+		return errorRsp(msg, protocol.CodeServerError, "response message name empty"), nil
 	}
 	return &protocol.Msg{
 		MsgType: protocol.MsgTypeRsp,
 		MsgID:   msg.MsgID,
 		UID:     msg.UID,
-		Cmd:     entry.resCmd,
+		Name:    resName,
 		Body:    body,
 	}, nil
 }
 
-// errorRsp 组装统一错误响应：Cmd=CmdError，body=pt.ErrorRes。
+// errorRsp 组装统一错误响应：Name=ErrorRes（由 pt.ErrorRes 类型反射得到），body=pt.ErrorRes。
 func errorRsp(req *protocol.Msg, code int32, msgStr string) *protocol.Msg {
-	body, _ := proto.Marshal(&pt.ErrorRes{Code: code, Msg: msgStr})
+	body, err := proto.Marshal(&pt.ErrorRes{Code: code, Msg: msgStr})
+	if err != nil {
+		logger.ERROR("marshal error response failed:", err)
+		return nil
+	}
 	rsp := &protocol.Msg{
 		MsgType: protocol.MsgTypeRsp,
-		Cmd:     protocol.CmdError,
+		Name:    MessageName(&pt.ErrorRes{}),
 		Body:    body,
 	}
 	if req != nil {

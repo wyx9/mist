@@ -5,6 +5,7 @@ import (
 
 	"simple_game/game/api/protos/pt"
 	"simple_game/game/internal/actor"
+	"simple_game/game/internal/route"
 	"simple_game/game/internal/rpc"
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/protocol"
@@ -75,17 +76,13 @@ func LobbyBroadcastHandler(ctx *rpc.HandlerContext[*actor.Player], req *pt.Lobby
 	if !p.Connected() {
 		return nil
 	}
-	var cmd uint16
 	var bodyMsg proto.Message
 	switch req.Kind {
 	case pt.LobbyBroadcastKind_LOBBY_JOIN:
-		cmd = protocol.CmdLobbyJoinPush
 		bodyMsg = &pt.LobbyJoinPush{Player: &pt.LobbyPlayer{UID: req.UID, Name: req.Name}, Online: req.Online}
 	case pt.LobbyBroadcastKind_LOBBY_LEAVE:
-		cmd = protocol.CmdLobbyLeavePush
 		bodyMsg = &pt.LobbyLeavePush{Player: &pt.LobbyPlayer{UID: req.UID, Name: req.Name}, Online: req.Online}
 	case pt.LobbyBroadcastKind_LOBBY_CHAT:
-		cmd = protocol.CmdChatPush
 		bodyMsg = &pt.ChatNtf{UUid: req.UID, Msg: req.Msg, Name: req.Name, Time: req.Time}
 	default:
 		logger.WARNING("unknown lobby broadcast kind:", req.Kind, "player:", p.Name())
@@ -97,7 +94,7 @@ func LobbyBroadcastHandler(ctx *rpc.HandlerContext[*actor.Player], req *pt.Lobby
 	}
 	out, err := protocol.EncodeMsg(&protocol.Msg{
 		MsgType: protocol.MsgTypePush,
-		Cmd:     cmd,
+		Name:    route.MessageName(bodyMsg),
 		UID:     req.UID,
 		Body:    body,
 	})

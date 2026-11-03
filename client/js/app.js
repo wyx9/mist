@@ -160,7 +160,7 @@ async function enterGameFlow() {
   // 握手成功即启动心跳，不依赖登录成功：连接静默是掉线重连循环的根源
   ws.startHeartbeat();
   try {
-    const res = await ws.sendReq(1, 'LoginReq', {
+    const res = await ws.sendReq('LoginReq', {
       UUid: state.uid,
       Name: state.account,
       PassWord: PASSWORD,
@@ -178,7 +178,7 @@ async function enterGameFlow() {
 
 async function refreshLobby() {
   try {
-    const res = await ws.sendReq(7, 'LobbyInfoReq', {}, { uid: state.uid, timeoutMs: 8000 });
+    const res = await ws.sendReq('LobbyInfoReq', {}, { uid: state.uid, timeoutMs: 8000 });
     state.players.clear();
     for (const p of res.Players || []) {
       state.players.set(String(p.UID), { uid: p.UID, name: p.Name });
@@ -192,7 +192,7 @@ async function refreshLobby() {
 
 async function loadChatHistory() {
   try {
-    const res = await ws.sendReq(9, 'ChatHistoryReq', {}, { uid: state.uid, timeoutMs: 8000 });
+    const res = await ws.sendReq('ChatHistoryReq', {}, { uid: state.uid, timeoutMs: 8000 });
     state.messages = (res.Messages || []).map((m) => ({
       uid: m.UUid,
       name: m.Name || '',
@@ -211,7 +211,7 @@ function sendChat() {
   if (!msg) return;
 
   $('btnSendChat').disabled = true;
-  ws.sendReq(5, 'SendChatReq', { UUid: state.uid, Msg: msg }, { uid: state.uid, timeoutMs: 8000 })
+  ws.sendReq('SendChatReq', { UUid: state.uid, Msg: msg }, { uid: state.uid, timeoutMs: 8000 })
     .then(() => {
       input.value = '';
     })
@@ -238,7 +238,7 @@ function queryPlayer() {
   if (targetUID === null) { toast('未找到在线玩家：' + name); return; }
 
   $('btnQueryPlayer').disabled = true;
-  ws.sendReq(11, 'PlayerInfoReq', { UUid: targetUID }, { uid: state.uid, timeoutMs: 8000 })
+  ws.sendReq('PlayerInfoReq', { UUid: targetUID }, { uid: state.uid, timeoutMs: 8000 })
     .then((res) => {
       const d = new Date(Number(res.LastLoginAt) * 1000);
       $('playerQueryResult').textContent =
@@ -307,18 +307,18 @@ function renderChat() {
   list.scrollTop = list.scrollHeight;
 }
 
-function handlePush(cmd, body) {
-  if (cmd === 10001) { // LobbyJoinPush
+function handlePush(name, body) {
+  if (name === 'LobbyJoinPush') {
     if (body.Player && String(body.Player.UID) !== String(state.uid)) {
       state.players.set(String(body.Player.UID), { uid: body.Player.UID, name: body.Player.Name });
     }
     if (body.Online !== undefined && body.Online !== null) state.online = body.Online;
     renderPlayers();
-  } else if (cmd === 10002) { // LobbyLeavePush
+  } else if (name === 'LobbyLeavePush') {
     if (body.Player) state.players.delete(String(body.Player.UID));
     if (body.Online !== undefined && body.Online !== null) state.online = body.Online;
     renderPlayers();
-  } else if (cmd === 10000) { // ChatPush
+  } else if (name === 'ChatNtf') {
     appendChatMessage(body);
   }
 }

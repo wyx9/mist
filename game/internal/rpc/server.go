@@ -18,7 +18,7 @@ type LocalCaller interface {
 }
 
 // Serve 处理一个到达本节点的 RpcFrame（接收侧入口）。
-// 按 method 反查 handler（含 category）、反序列化请求、本地投递到目标 actor；
+// 按消息名（frame.Method）反查 handler（含 category）、反序列化请求、本地投递到目标 actor；
 // 目标未运行/本地无记录时用 category 按需创建（Start 内从 Redis 重载数据）；
 // IsCall=true 时通过 reply 回写 RPC_RESPONSE。
 func Serve(local LocalCaller, frame *pt.RpcFrame, reply func(*pt.RpcFrame) error) error {

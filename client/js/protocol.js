@@ -2,7 +2,8 @@
 
 // ═══════════════════════════════════════════════════════════════
 // 协议编解码：protobuf wire 信封 + 业务消息体
-// 信封 Msg：1=msg_type 2=msg_id 3=uid 4=token 5=cmd 6=body
+// 信封 Msg：1=msg_type 2=msg_id 3=uid 4=token 5=name 6=body
+// name 为业务 Protobuf 消息名（如 LoginReq / LoginRes），服务端按名称反射路由
 // int64（uid/雪花 ID）用 BigInt 处理，避免 JS Number 精度丢失
 // ═══════════════════════════════════════════════════════════════
 
@@ -100,25 +101,8 @@ const MSGS = {
   PlayerInfoRes: { 1: ['UUid', 'varint'], 2: ['Name', 'string'], 3: ['Online', 'varint'], 4: ['LastLoginAt', 'varint'] },
 };
 
-// 命令号登记表
-const CMDS = {
-  1: { name: 'CmdLogin', req: 'LoginReq', rsp: 'LoginRes' },
-  2: { name: 'CmdLoginRsp', rsp: 'LoginRes' },
-  3: { name: 'CmdHeart', req: 'HeartReq', rsp: 'HeartRes' },
-  4: { name: 'CmdHeartRsp', rsp: 'HeartRes' },
-  5: { name: 'CmdSendChat', req: 'SendChatReq', rsp: 'SendChatRsp' },
-  6: { name: 'CmdSendChatRsp', rsp: 'SendChatRsp' },
-  7: { name: 'CmdLobbyInfo', req: 'LobbyInfoReq', rsp: 'LobbyInfoRes' },
-  8: { name: 'CmdLobbyInfoRsp', rsp: 'LobbyInfoRes' },
-  9: { name: 'CmdChatHistory', req: 'ChatHistoryReq', rsp: 'ChatHistoryRes' },
-  10: { name: 'CmdChatHistoryRsp', rsp: 'ChatHistoryRes' },
-  11: { name: 'CmdPlayerInfo', req: 'PlayerInfoReq', rsp: 'PlayerInfoRes' },
-  12: { name: 'CmdPlayerInfoRsp', rsp: 'PlayerInfoRes' },
-  10000: { name: 'CmdChatPush', push: 'ChatNtf' },
-  10001: { name: 'CmdLobbyJoinPush', push: 'LobbyJoinPush' },
-  10002: { name: 'CmdLobbyLeavePush', push: 'LobbyLeavePush' },
-  65535: { name: 'CmdError', rsp: 'ErrorRes' },
-};
+// 信封本身携带业务消息名（服务端反射路由得到），客户端按名称解码，
+// 不再维护命令号→消息类型映射表。
 
 function sortedFields(spec) {
   return Object.keys(spec).map(Number).sort((a, b) => a - b);
@@ -193,13 +177,13 @@ function encodeEnvelope(m) {
     parts.push(tagBytes(3, 0), varintBytes(m.uid));
   }
   if (m.token) parts.push(tagBytes(4, 2), strFieldBytes(m.token));
-  if (m.cmd) parts.push(tagBytes(5, 0), varintBytes(m.cmd));
+  if (m.name) parts.push(tagBytes(5, 2), strFieldBytes(m.name));
   if (m.body && m.body.length) parts.push(tagBytes(6, 2), bytesField(m.body));
   return concatBytes(parts);
 }
 
 function decodeEnvelope(u8) {
-  const m = { msgType: 0, msgID: 0, uid: 0n, token: '', cmd: 0, body: new Uint8Array(0) };
+  const m = { msgType: 0, msgID: 0, uid: 0n, token: '', name: '', body: new Uint8Array(0) };
   let pos = 0;
   while (pos < u8.length) {
     const tag = readVarint(u8, pos);
@@ -225,8 +209,8 @@ function decodeEnvelope(u8) {
         const v = readString(u8, pos); pos = v.pos; m.token = v.value; break;
       }
       case 5: {
-        if (wire !== 0) throw new Error('字段5 期望 varint');
-        const v = readVarint(u8, pos); pos = v.pos; m.cmd = Number(v.value); break;
+        if (wire !== 2) throw new Error('字段5 期望 string');
+        const v = readString(u8, pos); pos = v.pos; m.name = v.value; break;
       }
       case 6: {
         if (wire !== 2) throw new Error('字段6 期望 bytes');
@@ -238,17 +222,9 @@ function decodeEnvelope(u8) {
   return m;
 }
 
-function bodyTypeFor(cmd, msgType) {
-  const c = CMDS[cmd];
-  if (!c) return null;
-  if (msgType === 2) return c.rsp || null;
-  if (msgType === 3) return c.push || null;
-  return c.req || null;
-}
-
-function decodeBodyFor(cmd, msgType, body) {
-  const typeName = bodyTypeFor(cmd, msgType);
-  if (!typeName) return null;
+// 按消息名解码业务体：响应/推送信封已携带消息名（LoginRes / ChatNtf 等）
+function decodeBody(typeName, body) {
+  if (!typeName || !MSGS[typeName]) return null;
   return decodeMessage(typeName, body);
 }
 
