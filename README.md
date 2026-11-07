@@ -48,7 +48,7 @@ flowchart LR
 
 3. **长连接多路复用**：Gateway 与每个 Game 建立一条长连接，通过 tunnelID 隧道帧承载多个玩家会话与内部 RPC 信封，避免按玩家建连的资源开销。
 
-4. **服务注册与发现 + actor 位置表**：Game 启动后向 Redis 注册自身地址并心跳续期，Gateway 轮询注册表动态发现可用 Game 并维护长连接；可路由 actor 创建/关闭时写入/删除 `actor:loc:{name}→node`，供内部 RPC 做节点解析，支持多 Game 横向扩展。
+4. **服务注册与发现 + actor 位置表**：Game 启动后向 Redis 注册自身地址并心跳续期，Gateway 轮询注册表动态发现可用 Game 并维护长连接；可路由 actor 创建/关闭时写入/删除 `actor:loc:{uid}→node`，供内部 RPC 做节点解析，支持多 Game 横向扩展。
 
 5. **透明内部 RPC + 消息注册解耦**：跨 actor 调用统一走 `ctx.Send/Call`，本地优先、未命中经 gateway 转发到目标节点（`rpc → 统一 worker → AManager → actor handler`），调用方无感知节点；内部消息 handler 仿 controller 用 `rpc.Register/RegisterCall` 泛型注册，新增内部消息不改 Actor 文件。
 

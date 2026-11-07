@@ -7,6 +7,7 @@ import (
 	"simple_game/game/api/protos/pt"
 	"simple_game/game/internal/actor/core"
 	"simple_game/game/internal/actor/entity"
+	"simple_game/game/pkg/actortype"
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/network"
 	"simple_game/game/pkg/tool"
@@ -53,8 +54,8 @@ func (p *Player) Start() {
 
 }
 
-// Category 返回 Actor 类别标识。
-func (p *Player) Category() string { return PlayerActorName }
+// Type 返回 Actor 类型标识。
+func (p *Player) Type() actortype.ActorType { return ActorTypePlayer }
 
 // Stop 玩家 Actor 停止时同步落地兜底，并通知常驻 Room actor 移除自己。
 func (p *Player) Stop() {
@@ -68,25 +69,25 @@ func (p *Player) IdleTimeout() time.Duration { return 10 * time.Minute }
 // Routable 实现 core.Routable：玩家 actor 全局可路由（登录名全局唯一）。
 func (p *Player) Routable() {}
 
-// ActorID 实现 core.Persistable：返回玩家全局唯一 uid。
+// ActorID 返回玩家全局唯一 uid（Persistable）。
 func (p *Player) ActorID() int64 { return p.uid }
 
-// Name 返回玩家名。
+// Name 返回玩家展示名。
 func (p *Player) Name() string { return p.name }
 
-// PersistData 实现 core.Persistable：返回待序列化的玩家数据。
+// PersistData 返回待序列化的玩家数据。
 func (p *Player) PersistData() any { return p.PlayerData }
 
-// PersistKeyPrefix 实现 core.Persistable：玩家数据 Redis key 前缀。
+// PersistKeyPrefix 返回 Redis key 前缀。
 func (p *Player) PersistKeyPrefix() string { return "actor_data:player:" }
 
-// PersistTable 实现 core.Persistable：玩家数据 MySQL 表名。
+// PersistTable 返回 MySQL 表名。
 func (p *Player) PersistTable() string { return "player_data" }
 
-// PersistDBName 实现 core.Persistable：玩家数据 MySQL 库名，空串表示使用配置默认库。
+// PersistDBName 返回 MySQL 库名，空串表示使用配置默认库。
 func (p *Player) PersistDBName() string { return "" }
 
-// SetPersistStore 实现 core.SetPersistStore：创建阶段注入，须在 Start 之前完成。
+// SetPersistStore 创建阶段注入，须在 Start 之前完成。
 func (p *Player) SetPersistStore(s core.PersistStore) { p.store = s }
 
 // SetTimerHandle 实现 core.SetTimerHandle：创建阶段注入 actor 内部定时器句柄。

@@ -252,7 +252,7 @@ func (s *Server) handleTunnelHandshake(link *gatewayLink, tunnelID string, paylo
 		if err := s.ActorManner.ClaimActorLoc(uid); err != nil {
 			logger.WARNING("claim actor location failed:", err, "uid:", uid)
 		}
-		ab, err := s.ActorManner.EnsureRunning(uid, "player")
+		ab, err := s.ActorManner.EnsureRunning(uid, actor.ActorTypePlayer)
 		if err != nil {
 			return s.ackHandshake(link, tunnelID, false, err.Error())
 		}
@@ -303,10 +303,11 @@ func (s *Server) detachTunnel(tunnelID string, tc *TunnelConn) {
 }
 
 // kickFaultedTunnel actor 故障（handler 超时）时踢掉其隧道连接，由故障回调异步调用。
-func (s *Server) kickFaultedTunnel(name string) {
-	val, ok := s.tunnels.Load(name)
+func (s *Server) kickFaultedTunnel(uid int64) {
+	tunnelID := strconv.FormatInt(uid, 10)
+	val, ok := s.tunnels.Load(tunnelID)
 	if !ok {
 		return
 	}
-	s.closeTunnel(name, val.(*TunnelConn))
+	s.closeTunnel(tunnelID, val.(*TunnelConn))
 }

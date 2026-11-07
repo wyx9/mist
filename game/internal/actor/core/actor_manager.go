@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"simple_game/game/internal/rpc"
+	"simple_game/game/pkg/actortype"
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/protocol"
 	"simple_game/game/pkg/timer"
@@ -21,13 +22,13 @@ type categoryIndex struct {
 // AManager Actor 管理器：全局单例，负责所有 Actor 的存储、查找、消息投递与生命周期状态机。
 type AManager struct {
 	actorMap     sync.Map // uidKey → *ActorBase 主存储（运行中/休眠中）
-	knownActors  sync.Map // uidKey → category 已初始化过（关闭后仍保留，供按需复活）
-	categories   sync.Map // categoryName(string) → *categoryIndex
-	factories    sync.Map // categoryName(string) → ActorFactory
+	knownActors  sync.Map // uidKey → actortype.ActorType（已初始化过，关闭后仍保留，供按需复活）
+	categories   sync.Map // actortype.ActorType → *categoryIndex
+	factories    sync.Map // actortype.ActorType → ActorFactory
 	mu           sync.RWMutex
 	createMu     sync.Mutex        // 串行化「工厂创建 + 启动」，避免同 uid 并发重复创建
 	sched        *timer.Scheduler  // actor 内部内存定时调度器（惰性创建）
-	faultHandler func(name string) // actor 故障回调（handler 超时等），由 gameserver 设置
+	faultHandler func(uid int64) // actor 故障回调（handler 超时等），由 gameserver 设置
 	remoteRouter rpc.RemoteRouter  // 跨进程路由（本地未命中时委托），由 gameserver 注入
 	sweeperCtx   context.Context
 	sweeperStop  context.CancelFunc
@@ -36,19 +37,19 @@ type AManager struct {
 }
 
 // SetFaultHandler 注册 actor 故障回调（如 handler 超时），用于踢掉故障玩家的连接。
-func (am *AManager) SetFaultHandler(fn func(name string)) {
+func (am *AManager) SetFaultHandler(fn func(uid int64)) {
 	am.mu.Lock()
 	defer am.mu.Unlock()
 	am.faultHandler = fn
 }
 
 // notifyFault 通知故障回调（不阻塞，读取回调快照后调用）。
-func (am *AManager) notifyFault(name string) {
+func (am *AManager) notifyFault(uid int64) {
 	am.mu.RLock()
 	fn := am.faultHandler
 	am.mu.RUnlock()
 	if fn != nil {
-		fn(name)
+		fn(uid)
 	}
 }
 
@@ -81,14 +82,14 @@ func (am *AManager) addrSnapshot() string {
 }
 
 // RegisterFactory 注册某类 actor 的工厂（按需启动时使用）。
-func (am *AManager) RegisterFactory(category string, f ActorFactory) error {
-	if category == "" {
-		return errors.New("empty actor category")
+func (am *AManager) RegisterFactory(actorType actortype.ActorType, f ActorFactory) error {
+	if actorType == "" {
+		return errors.New("empty actor type")
 	}
-	if _, ok := am.factories.Load(category); ok {
-		return fmt.Errorf("actor factory already registered: %s", category)
+	if _, ok := am.factories.Load(actorType); ok {
+		return fmt.Errorf("actor factory already registered: %s", actorType)
 	}
-	am.factories.Store(category, f)
+	am.factories.Store(actorType, f)
 	return nil
 }
 
@@ -143,9 +144,7 @@ func (am *AManager) sweepOnce() {
 	})
 }
 
-//		sweepActor 单 actor 状态推进：
-//	  - Running 且空闲超时 → Sleeping（仅状态标签，在线永不因空闲关闭）；
-//	  - Sleeping 且未附加连接且休眠超时 → 真正关闭（落盘 + 记 knownActors，位置保留供复活）。
+// sweepActor 单 actor 状态推进：运行空闲超时 → 休眠；休眠超时且未附加 → 关闭。
 func (am *AManager) sweepActor(ab *ActorBase) {
 	if ab.State() == StateClosed || ab.idleTimeout <= 0 {
 		return
@@ -175,48 +174,48 @@ func (am *AManager) sweepActor(ab *ActorBase) {
 	}
 }
 
-// RegisterCategory 注册 Actor 类别。传入原型实例，通过 Category() 获取类别名。
+// RegisterCategory 注册 Actor 类型。传入原型实例，通过 Type() 获取类型标识。
 func (am *AManager) RegisterCategory(prototype IActor) {
 	am.mu.Lock()
 	defer am.mu.Unlock()
-	category := prototype.Category()
-	if category == "" {
-		logger.ERROR("RegisterCategory: empty category from prototype")
+	actorType := prototype.Type()
+	if actorType == "" {
+		logger.ERROR("RegisterCategory: empty type from prototype")
 		return
 	}
-	if _, ok := am.categories.Load(category); ok {
-		logger.ERROR("category already registered:", category)
+	if _, ok := am.categories.Load(actorType); ok {
+		logger.ERROR("category already registered:", actorType)
 		return
 	}
-	am.categories.Store(category, &categoryIndex{})
+	am.categories.Store(actorType, &categoryIndex{})
 }
 
-// addToCategories 将 actor 按 Category() 写入对应类别索引。
+// addToCategories 将 actor 按 Type() 写入对应类型索引。
 func (am *AManager) addToCategories(ab *ActorBase) {
-	category := ab.iActor.Category()
-	if category == "" {
+	actorType := ab.Type()
+	if actorType == "" {
 		return
 	}
-	value, ok := am.categories.Load(category)
+	value, ok := am.categories.Load(actorType)
 	if !ok {
 		return
 	}
 	ci := value.(*categoryIndex)
-	ci.actors.Store(ab.name, ab)
+	ci.actors.Store(uidKey(ab.id), ab)
 }
 
-// removeFromCategories 将 actor 从对应类别索引中删除。
+// removeFromCategories 将 actor 从对应类型索引中删除。
 func (am *AManager) removeFromCategories(ab *ActorBase) {
-	category := ab.iActor.Category()
-	if category == "" {
+	actorType := ab.Type()
+	if actorType == "" {
 		return
 	}
-	value, ok := am.categories.Load(category)
+	value, ok := am.categories.Load(actorType)
 	if !ok {
 		return
 	}
 	ci := value.(*categoryIndex)
-	ci.actors.Delete(ab.name)
+	ci.actors.Delete(uidKey(ab.id))
 }
 
 // Add 添加 Actor 到管理器：缓存空闲超时并刷新活动时间，自动按已注册类别建立索引。
@@ -232,7 +231,7 @@ func (am *AManager) Add(ab *ActorBase) error {
 		}
 	}
 	ab.touchActivity()
-	am.actorMap.Store(ab.name, ab)
+	am.actorMap.Store(uidKey(ab.id), ab)
 	am.addToCategories(ab)
 	// 注册节点：仅可路由 actor 参与位置表，Room 等本地常驻 actor 跳过。
 	if _, ok := ab.iActor.(Routable); ok {
@@ -265,6 +264,8 @@ func (am *AManager) remove(uid int64) {
 }
 
 // unregisterLocation 若 actor 可路由，删除位置记录（彻底删除时用）。
+
+// unregisterLocation 若 actor 可路由，删除位置记录（彻底删除时用）。
 func (am *AManager) unregisterLocation(ab *ActorBase) {
 	if _, ok := ab.iActor.(Routable); !ok {
 		return
@@ -294,7 +295,7 @@ func (am *AManager) CloseActor(uid int64, timeout time.Duration) error {
 	if ab == nil {
 		return ErrActorNotFound
 	}
-	if cat := ab.iActor.Category(); cat != "" {
+	if cat := ab.Type(); cat != "" {
 		am.knownActors.Store(uidKey(uid), cat)
 	}
 	err := ab.Shutdown(timeout)
@@ -323,24 +324,22 @@ func (am *AManager) DeleteActor(uid int64, timeout time.Duration) error {
 	return am.CloseActor(uid, timeout)
 }
 
-// EnsureRunning 确保 uid 对应 actor 已运行（本地/跨节点 RPC 按需启动的统一入口）。
-// 只允许 owner 节点调用：创建路径经位置原子认领（Add 内可路由 actor 调 RegisterAddr），
-// 已被他节点占有时返回 ErrActorNotOwner 且不残留实例。
-// category 仅在所有记录（内存 knownActors / Redis actor:init）均未命中时使用。
-func (am *AManager) EnsureRunning(uid int64, category string) (*ActorBase, error) {
+// EnsureRunning 确保 uid 的 actor 已运行（本地/跨节点 RPC 按需启动统一入口）。
+// 仅 owner 节点可创建：位置认领失败返回 ErrActorNotOwner 且不残留实例；actorType 为兜底类型。
+func (am *AManager) EnsureRunning(uid int64, actorType actortype.ActorType) (*ActorBase, error) {
 	if uid <= 0 {
 		return nil, fmt.Errorf("invalid actor uid: %d", uid)
 	}
-	return am.ensureRunning(uid, category)
+	return am.ensureRunning(uid, actorType)
 }
 
 // EnsureDaemon 启动常驻 actor（保留 uid，如 RoomUID）：跳过 uid 合法性校验。
 // 仅用于本地常驻、不参与路由的 actor（如每节点一个的 Room），不经过 RPC/路由路径。
-func (am *AManager) EnsureDaemon(uid int64, category string) (*ActorBase, error) {
-	return am.ensureRunning(uid, category)
+func (am *AManager) EnsureDaemon(uid int64, actorType actortype.ActorType) (*ActorBase, error) {
+	return am.ensureRunning(uid, actorType)
 }
 
-func (am *AManager) ensureRunning(uid int64, category string) (*ActorBase, error) {
+func (am *AManager) ensureRunning(uid int64, actorType actortype.ActorType) (*ActorBase, error) {
 	key := uidKey(uid)
 	if v, ok := am.actorMap.Load(key); ok {
 		ab := v.(*ActorBase)
@@ -349,7 +348,7 @@ func (am *AManager) ensureRunning(uid int64, category string) (*ActorBase, error
 		}
 		return ab, nil
 	}
-	cat, err := am.actorCategory(uid, category)
+	cat, err := am.actorCategory(uid, actorType)
 	if err != nil {
 		return nil, err
 	}
@@ -370,12 +369,12 @@ func (am *AManager) ensureRunning(uid int64, category string) (*ActorBase, error
 	return am.startByFactory(uid, cat)
 }
 
-// actorCategory 获取 uid 的类别：内存 knownActors → Redis actor:init → 兜底参数。
+// actorCategory 获取 uid 的 actor 类型：内存 knownActors → Redis actor:init → 兜底参数。
 // 只在 EnsureRunning（唯一启动入口）内部调用，避免重复查询。
-func (am *AManager) actorCategory(uid int64, fallback string) (string, error) {
+func (am *AManager) actorCategory(uid int64, fallback actortype.ActorType) (actortype.ActorType, error) {
 	key := uidKey(uid)
 	if v, ok := am.knownActors.Load(key); ok {
-		return v.(string), nil
+		return v.(actortype.ActorType), nil
 	}
 	cat, found, err := am.GetActorCategory(uid)
 	if err != nil {
@@ -387,24 +386,24 @@ func (am *AManager) actorCategory(uid int64, fallback string) (string, error) {
 	return fallback, nil
 }
 
-// startByFactory 按类别工厂创建 actor 并启动。
-func (am *AManager) startByFactory(uid int64, category string) (*ActorBase, error) {
-	fv, ok := am.factories.Load(category)
+// startByFactory 按类型工厂创建 actor 并启动。
+func (am *AManager) startByFactory(uid int64, actorType actortype.ActorType) (*ActorBase, error) {
+	fv, ok := am.factories.Load(actorType)
 	if !ok {
-		return nil, fmt.Errorf("actor factory not registered: %s", category)
+		return nil, fmt.Errorf("actor factory not registered: %s", actorType)
 	}
 	actor, err := fv.(ActorFactory)(uid)
 	if err != nil {
 		return nil, err
 	}
-	return am.startNew(uid, category, actor)
+	return am.startNew(uid, actorType, actor)
 }
 
 // startNew 创建并启动 actor：记录初始化（内存 + Redis）、注入定时器句柄、注册到管理器。
-func (am *AManager) startNew(uid int64, category string, actor IActor) (*ActorBase, error) {
+func (am *AManager) startNew(uid int64, actorType actortype.ActorType, actor IActor) (*ActorBase, error) {
 	key := uidKey(uid)
-	am.knownActors.Store(key, category)
-	if err := am.RegisterInit(uid, category); err != nil {
+	am.knownActors.Store(key, actorType)
+	if err := am.RegisterInit(uid, actorType); err != nil {
 		logger.ERROR("register actor init failed:", err, "uid:", uid)
 	}
 	// 定时器句柄须在 NewActorBase（触发 Start）之前注入，保证 Start 内也能排定时器。
@@ -517,9 +516,9 @@ func (am *AManager) Attach(uid int64, conn any) error {
 	return nil
 }
 
-// RangeByCategory 遍历指定类别的所有 Actor。回调返回 false 时停止遍历。
-func (am *AManager) RangeByCategory(category string, fn func(name string, ab *ActorBase) bool) {
-	value, ok := am.categories.Load(category)
+// RangeByType 遍历指定类型的所有 Actor。回调返回 false 时停止遍历。
+func (am *AManager) RangeByType(actorType actortype.ActorType, fn func(*ActorBase) bool) {
+	value, ok := am.categories.Load(actorType)
 	if !ok {
 		return
 	}
@@ -529,7 +528,7 @@ func (am *AManager) RangeByCategory(category string, fn func(name string, ab *Ac
 		if !ok {
 			return true
 		}
-		return fn(key.(string), ab)
+		return fn(ab)
 	})
 }
 
@@ -544,24 +543,6 @@ func (am *AManager) Find(uid int64) *ActorBase {
 		return nil
 	}
 	return actor
-}
-
-// FindByCategory 按类别和 key（uidKey 字符串）查找 Actor 实例。
-func (am *AManager) FindByCategory(category, key string) *ActorBase {
-	value, ok := am.categories.Load(category)
-	if !ok {
-		return nil
-	}
-	ci := value.(*categoryIndex)
-	actorVal, ok := ci.actors.Load(key)
-	if !ok {
-		return nil
-	}
-	ab, ok := actorVal.(*ActorBase)
-	if !ok {
-		return nil
-	}
-	return ab
 }
 
 // Range 遍历所有 Actor。回调返回 false 时停止遍历。
@@ -605,10 +586,7 @@ func (am *AManager) Deliver(uid int64, msg *protocol.Msg) error {
 	return am.deliver(ab, &Envelope{From: "server", Kind: MsgClient, Payload: msg})
 }
 
-// Cast 向其他 actor 异步投递消息（业务消息，计入活动时间）。
-// 职责：本地 Find 命中 → 直接投递；未命中 → 直接发 gateway（RemoteRouter），
-// 由 gateway 按 actor:loc 寻址转发到 owner 节点（owner 节点 SendLocal 按需启动/复活）。
-// 不查询位置、不本地创建/复活——寻址职责全部收敛在 gateway。
+// Cast 异步投递：本地命中直接投递，否则交 remoteRouter（gateway）跨节点寻址。
 func (am *AManager) Cast(to int64, from string, msg interface{}) error {
 	if ab := am.Find(to); ab != nil {
 		return am.deliver(ab, &Envelope{From: from, Kind: MsgSend, Payload: msg})
@@ -619,12 +597,10 @@ func (am *AManager) Cast(to int64, from string, msg interface{}) error {
 	return ErrActorNotFound
 }
 
-// SendLocal 本地异步投递（不带远程回退），owner 节点入口（供 rpc.Serve 调用）。
-// 请求已到达 owner 节点，允许按需启动并投递；创建路径经位置原子认领，
-// 非 owner 节点调用将返回 ErrActorNotOwner（不会残留实例）。
-// category 为兜底类别：本地无记录时据此按需创建/复活，避免依赖进程内存判断。
-func (am *AManager) SendLocal(to int64, category string, from string, msg interface{}) error {
-	ab, err := am.EnsureRunning(to, category)
+// SendLocal 本地异步投递（无远程回退，rpc.Serve 入口）：允许按需启动/复活，
+// 非 owner 节点调用返回 ErrActorNotOwner。actorType 仅作兜底类型。
+func (am *AManager) SendLocal(to int64, actorType actortype.ActorType, from string, msg interface{}) error {
+	ab, err := am.EnsureRunning(to, actorType)
 	if err != nil {
 		return err
 	}
@@ -641,10 +617,7 @@ func (am *AManager) SendSystem(to int64, from string, msg interface{}) error {
 	return am.deliver(ab, &Envelope{From: from, Kind: MsgSend, Payload: msg, System: true})
 }
 
-// Call 向其他 actor 发起 RPC 并等待回复。
-// 职责：本地 Find 命中 → 直接本地调用；未命中 → 直接发 gateway（RemoteRouter），
-// 由 gateway 按 actor:loc 寻址转发到 owner 节点（owner 节点 CallLocal 按需启动/复活）。
-// 不查询位置、不本地创建/复活——寻址职责全部收敛在 gateway。
+// Call 同步调用：本地命中直接调用，否则交 remoteRouter（gateway）跨节点寻址。
 func (am *AManager) Call(to int64, from string, msg interface{}, timeout time.Duration) (interface{}, error) {
 	if ab := am.Find(to); ab != nil {
 		return am.callLocal(ab, to, from, msg, timeout)
@@ -655,12 +628,10 @@ func (am *AManager) Call(to int64, from string, msg interface{}, timeout time.Du
 	return nil, ErrActorNotFound
 }
 
-// CallLocal 本地 RPC（不带远程回退），owner 节点入口（供 rpc.Serve 调用）。
-// 请求已到达 owner 节点，允许按需启动并投递；创建路径经位置原子认领，
-// 非 owner 节点调用将返回 ErrActorNotOwner（不会残留实例）。
-// category 为兜底类别：本地无记录时据此按需创建/复活，避免依赖进程内存判断。
-func (am *AManager) CallLocal(to int64, category string, from string, msg interface{}, timeout time.Duration) (interface{}, error) {
-	ab, err := am.EnsureRunning(to, category)
+// CallLocal 本地 RPC（无远程回退，rpc.Serve 入口）：允许按需启动/复活，
+// 非 owner 节点调用返回 ErrActorNotOwner。actorType 仅作兜底类型。
+func (am *AManager) CallLocal(to int64, actorType actortype.ActorType, from string, msg interface{}, timeout time.Duration) (interface{}, error) {
+	ab, err := am.EnsureRunning(to, actorType)
 	if err != nil {
 		return nil, err
 	}
@@ -695,9 +666,7 @@ func (am *AManager) callLocal(ab *ActorBase, to int64, from string, msg interfac
 	}
 }
 
-// deliver 投递信封到目标 actor 队列。
-// 业务消息（非 System）先刷新活动时间（唤醒休眠 actor）再入队；
-// 入队时监听 stop 通道，避免与关闭竞态导致阻塞或 panic。
+// deliver 投递信封：业务消息先刷新活动时间并唤醒休眠 actor；入队时监听 stop 防关闭竞态。
 func (am *AManager) deliver(ab *ActorBase, env *Envelope) error {
 	if ab.isClosed() {
 		return ErrActorClose

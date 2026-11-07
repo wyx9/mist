@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"simple_game/game/pkg/actortype"
 	"simple_game/game/pkg/tool"
 )
 
@@ -19,7 +20,7 @@ const (
 
 // ActorBase Actor 基础结构体，提供生命周期状态机与消息队列能力。
 type ActorBase struct {
-	name          string                                   // Actor 注册键 = uid 的十进制字符串
+	actorType     actortype.ActorType                      // Actor 类型标识（player/room 等），创建时取自 IActor.Type()
 	id            int64                                    // 全局唯一 uid，由创建时统一赋值
 	iActor        IActor                                   // Actor 接口实现，包含具体的业务逻辑
 	clientHandler func(ctx *ActorContext, msg interface{}) // 客户端消息分发：创建时注入，默认走 HandleClientMsg
@@ -43,6 +44,11 @@ func (ac *ActorBase) ID() int64 {
 // SetID 设置 Actor uid（仅创建阶段调用，须在注册进管理器之前完成）。
 func (ac *ActorBase) SetID(id int64) {
 	atomic.StoreInt64(&ac.id, id)
+}
+
+// Type 返回 Actor 类型标识。
+func (ac *ActorBase) Type() actortype.ActorType {
+	return ac.actorType
 }
 
 // wake 唤醒休眠 actor 为运行（EnsureRunning 复用休眠 actor 时调用）。
@@ -143,17 +149,17 @@ func (ac *ActorBase) markAttached() bool {
 // uidKey 将 uid 转为 actor 注册键（十进制字符串），统一走本地 tool 工具类转换。
 func uidKey(uid int64) string { return tool.ToString(uid) }
 
-// NewActorBase 创建新的 Actor 实例并启动主循环。uid 为全局唯一身份，注册键为其十进制字符串。
+// NewActorBase 创建新的 Actor 实例并启动主循环。uid 为全局唯一身份。
 func NewActorBase(uid int64, callBack IActor) *ActorBase {
 	ctx, cancel := context.WithCancel(context.Background())
 	ab := &ActorBase{
-		name:    uidKey(uid),
-		id:      uid,
-		iActor:  callBack,
-		request: make(chan interface{}, QueueSize),
-		stop:    make(chan struct{}),
-		ctx:     ctx,
-		cancel:  cancel,
+		actorType: callBack.Type(),
+		id:        uid,
+		iActor:    callBack,
+		request:   make(chan interface{}, QueueSize),
+		stop:      make(chan struct{}),
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 
 	ab.loop() // 启动 Actor 的主循环

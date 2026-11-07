@@ -3,6 +3,8 @@ package core
 import (
 	"context"
 	"fmt"
+
+	"simple_game/game/pkg/actortype"
 	"simple_game/game/pkg/redis"
 	"simple_game/game/pkg/registry"
 )
@@ -22,6 +24,7 @@ func (am *AManager) RegisterAddr(uid int64) error {
 	return nil
 }
 
+// UnregisterAddr 删除某个 actor 的位置记录（彻底删除时用）。
 func (am *AManager) UnregisterAddr(uid int64) error {
 	if redis.RedisClient == nil {
 		return nil
@@ -52,13 +55,14 @@ func (am *AManager) IsOwner(uid int64) (bool, error) {
 	return addr == am.addrSnapshot(), nil
 }
 
-func (am *AManager) RegisterInit(uid int64, category string) error {
+func (am *AManager) RegisterInit(uid int64, actorType actortype.ActorType) error {
 	if redis.RedisClient == nil {
 		return nil
 	}
-	return registry.RegisterActorInit(context.Background(), redis.RedisClient, uid, category)
+	return registry.RegisterActorInit(context.Background(), redis.RedisClient, uid, string(actorType))
 }
 
+// UnregisterInit 删除初始化记录（彻底删除 actor 时用）。
 func (am *AManager) UnregisterInit(uid int64) error {
 	if redis.RedisClient == nil {
 		return nil
@@ -66,10 +70,14 @@ func (am *AManager) UnregisterInit(uid int64) error {
 	return registry.UnregisterActorInit(context.Background(), redis.RedisClient, uid)
 }
 
-// GetActorCategory 查询某 uid 的类别；未初始化返回 found=false。
-func (am *AManager) GetActorCategory(uid int64) (category string, found bool, err error) {
+// GetActorCategory 查询某 uid 的 actor 类型；未初始化返回 found=false。
+func (am *AManager) GetActorCategory(uid int64) (actortype.ActorType, bool, error) {
 	if redis.RedisClient == nil {
 		return "", false, nil
 	}
-	return registry.ActorCategory(context.Background(), redis.RedisClient, uid)
+	cat, found, err := registry.ActorCategory(context.Background(), redis.RedisClient, uid)
+	if err != nil {
+		return "", false, err
+	}
+	return actortype.ActorType(cat), found, nil
 }

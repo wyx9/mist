@@ -1,6 +1,5 @@
-// Package protocol 定义业务消息的信封结构体与命令号。
-// 逻辑消息为 protobuf 信封 Msg（含消息类型/消息 ID/uid/token/消息名/body），
-// 路由键为业务消息名（Protobuf 消息名），TCP 传输层外套 4B 长度头，WS 直接以二进制帧承载。
+// Package protocol 定义业务消息信封与编解码。
+// 信封字段：msg_type/msg_id/uid/token/name/body；路由键为业务消息名。
 package protocol
 
 import (
@@ -15,19 +14,19 @@ import (
 type MsgType uint16
 
 const (
-	MsgTypeReq  MsgType = 1 // 请求（含心跳）
-	MsgTypeRsp  MsgType = 2 // 响应
-	MsgTypePush MsgType = 3 // 推送（服务端主动下发，本期预留）
+	MsgTypeReq  MsgType = 1
+	MsgTypeRsp  MsgType = 2
+	MsgTypePush MsgType = 3
 )
 
-// Msg 消息信封结构体：消息头字段 + 业务 protobuf 消息体。
+// Msg 消息信封：消息头 + 业务 protobuf 消息体。
 type Msg struct {
-	MsgType MsgType // 消息类型：请求/响应/推送
-	MsgID   uint64  // 消息 ID：客户端生成递增，服务端响应原样回填
-	UID     int64   // 玩家 uid：登录时绑定，后续消息携带
-	Token   string  // 认证 token：登录消息必带，其余消息可选携带
-	Name    string  // 业务消息名：Protobuf 消息名，如 LoginReq / LoginRes（反射路由键）
-	Body    []byte  // 业务 protobuf 消息体
+	MsgType MsgType
+	MsgID   uint64 // 客户端生成，服务端响应原样回填
+	UID     int64  // 玩家 uid：登录时绑定
+	Token   string // 认证 token：登录必带，其余可选
+	Name    string // 业务消息名（如 LoginReq），即路由键
+	Body    []byte
 }
 
 // 信封字段编号（与标准 protobuf wire 格式兼容，未来可补 .proto 定义）。
@@ -43,8 +42,7 @@ const (
 // ErrInvalidWire 消息字节流非法（截断或字段类型不匹配）。
 var ErrInvalidWire = errors.New("invalid message wire data")
 
-// EncodeMsg 将消息信封序列化为 protobuf wire 字节。
-// 零值字段按 proto3 语义省略，未知调用方无需关心。
+// EncodeMsg 序列化消息信封（零值字段省略）。
 func EncodeMsg(m *Msg) ([]byte, error) {
 	if m == nil {
 		return nil, errors.New("nil message")
@@ -77,8 +75,7 @@ func EncodeMsg(m *Msg) ([]byte, error) {
 	return b, nil
 }
 
-// DecodeMsg 将 protobuf wire 字节解析为消息信封结构体。
-// 空数据解析为零值 Msg；未知字段跳过（保证向前兼容）；截断/坏数据返回错误。
+// DecodeMsg 解析消息信封；空数据为零值，未知字段跳过（向前兼容），坏数据返回错误。
 func DecodeMsg(data []byte) (*Msg, error) {
 	m := &Msg{}
 	for len(data) > 0 {

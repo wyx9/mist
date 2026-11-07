@@ -10,6 +10,7 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	core "simple_game/game/internal/actor/core"
+	"simple_game/game/pkg/actortype"
 	"simple_game/game/pkg/logger"
 	"simple_game/game/pkg/storage"
 )
@@ -79,7 +80,7 @@ func (m *Manager) Register(prototype core.IActor) error {
 	if !ok {
 		return fmt.Errorf("persist: %T does not implement Persistable", prototype)
 	}
-	category := prototype.Category()
+	category := string(prototype.Type())
 	if category == "" {
 		return fmt.Errorf("persist: empty category for %T", prototype)
 	}
@@ -205,7 +206,7 @@ func (m *Manager) tickAll() {
 	}
 	m.mu.Unlock()
 	for _, category := range categories {
-		m.am.RangeByCategory(category, func(name string, ab *core.ActorBase) bool {
+		m.am.RangeByType(actortype.ActorType(category), func(ab *core.ActorBase) bool {
 			if _, ok := ab.Actor().(core.Persistable); !ok {
 				return true
 			}

@@ -66,8 +66,7 @@ type ClientWriter interface {
 	WriteMessage(data []byte) error
 }
 
-// Push 服务端主动向当前玩家客户端推送消息（MsgTypePush）。
-// 推送帧的消息名由 msg 的类型反射得到，无需命令号。
+// Push 服务端主动向当前玩家客户端推送消息（MsgTypePush）：消息名由类型反射得到。
 // 只能在 actor 串行循环内调用（controller handler 满足），写入无锁竞争；
 // actor 不具备写连接能力时返回错误。
 func (c *HandlerContext[A]) Push(msg proto.Message) error {
@@ -126,14 +125,10 @@ type routeEntry struct {
 
 var routes = map[string]routeEntry{}
 
-// Register 泛型注册入口：A 为 actor 具体类型（如 *actor.Player / *actor.Room），
-// T 为请求消息类型。路由键由 T 反射得到（Protobuf 消息名），无需命令号：
+// Register 注册客户端路由：路由键由请求类型 T 反射得到（消息名），
+// 响应名由 handler 返回值反射得到（无需配对表）；消息名重复注册直接 panic。
 //
 //	route.Register[*actor.Player, *pt.LoginReq](LoginController)
-//
-// handler 收到类型化的 HandlerContext[A] 与已反序列化的 T，返回响应消息；
-// 响应消息名由返回值类型反射得到，因此不维护请求→响应配对表。
-// 消息名重复注册会直接 panic（跨 proto 包同名消息在注册期暴露）。
 func Register[A any, T proto.Message](h func(ctx *HandlerContext[A], req T) (proto.Message, error)) {
 	var zero T
 	typ := reflect.TypeOf(zero).Elem()
@@ -162,10 +157,8 @@ func Register[A any, T proto.Message](h func(ctx *HandlerContext[A], req T) (pro
 	}
 }
 
-// Route 按消息信封的 Name 分发，返回组装好的响应信封。
-// 成功：MsgType=Rsp、Name=响应消息名（handler 返回值的类型反射得到）、MsgID/UID 原样回填；
-// handler 出错 / body 反序列化失败 / panic：记日志并返回 Name=ErrorRes + pt.ErrorRes 响应；
-// nil msg / 未知消息名 / actor 类型不匹配：返回 error，不下发响应。
+// Route 按信封 Name 分发并组装响应；handler 出错/panic 返回 ErrorRes，
+// 未知消息名或 actor 类型不匹配返回 error（不下发响应）。
 func Route(ctx any, msg *protocol.Msg) (rsp *protocol.Msg, err error) {
 	defer func() {
 		if r := recover(); r != nil {

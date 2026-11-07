@@ -11,15 +11,16 @@ import (
 	"simple_game/game/api/protos/pt"
 	"simple_game/game/internal/actor/core"
 	"simple_game/game/internal/rpc"
+	"simple_game/game/pkg/actortype"
 	"simple_game/game/pkg/codec"
 )
 
 // testActor 测试用 actor，实现 core.IActor。
 type testActor struct{}
 
-func (a *testActor) Start()           {}
-func (a *testActor) Stop()            {}
-func (a *testActor) Category() string { return "test" }
+func (a *testActor) Start()                      {}
+func (a *testActor) Stop()                       {}
+func (a *testActor) Type() actortype.ActorType { return actortype.ActorType("test") }
 
 // tcpTransport 实现 rpc.Transport：把 RpcFrame 序列化字节经 4B 长度头写入 TCP。
 type tcpTransport struct{ conn net.Conn }
@@ -101,24 +102,24 @@ func TestRemoteCallAndSend(t *testing.T) {
 	const echoUID = int64(1001)
 
 	am := &core.AManager{}
-	if err := am.RegisterFactory("test", func(uid int64) (core.IActor, error) {
+	if err := am.RegisterFactory(actortype.ActorType("test"), func(uid int64) (core.IActor, error) {
 		return &testActor{}, nil
 	}); err != nil {
 		t.Fatalf("register factory: %v", err)
 	}
-	if _, err := am.EnsureRunning(echoUID, "test"); err != nil {
+	if _, err := am.EnsureRunning(echoUID, actortype.ActorType("test")); err != nil {
 		t.Fatalf("ensure actor: %v", err)
 	}
 
 	// 同步（Call）handler
-	rpc.RegisterCall[*testActor, *pt.RoomGetPlayersReq, *pt.RoomGetPlayersRes]("test",
+	rpc.RegisterCall[*testActor, *pt.RoomGetPlayersReq, *pt.RoomGetPlayersRes](actortype.ActorType("test"),
 		func(ctx *rpc.HandlerContext[*testActor], req *pt.RoomGetPlayersReq) (*pt.RoomGetPlayersRes, error) {
 			return &pt.RoomGetPlayersRes{Players: []*pt.RoomPlayerInfo{{UID: 42, Name: "echo"}}}, nil
 		})
 
 	// 异步（Cast）handler
 	noted := make(chan string, 1)
-	rpc.Register[*testActor, *pt.RoomPlayerJoin]("test",
+	rpc.Register[*testActor, *pt.RoomPlayerJoin](actortype.ActorType("test"),
 		func(ctx *rpc.HandlerContext[*testActor], req *pt.RoomPlayerJoin) error {
 			noted <- "ok"
 			return nil

@@ -5,21 +5,21 @@ import (
 	"reflect"
 
 	"google.golang.org/protobuf/proto"
+
+	"simple_game/game/pkg/actortype"
 )
 
 // dispatchFunc 注册项的统一调用入口：断言 actor 上下文、执行具体 handler。
 type dispatchFunc func(actor any, comm Comm, from string, payload interface{}) (interface{}, error)
 
-// entry 单个内部消息的注册项。
-// name 为请求消息名（Protobuf 消息名，如 RoomPlayerJoin），作为路由键（远端帧 Method 用）；
-// reqType/resType 存结构体类型（如 pt.RoomGetPlayersReq），用于 reflect.New 构造实例；
-// 分发按消息指针类型（*pt.RoomGetPlayersReq）索引，见 add 内的 byType。
+// entry 内部消息注册项：路由键为请求消息名（远端帧 Method 用），
+// actorType 供接收端按需创建/复活 actor；byType/byName 双索引分别服务本地分发与远端路由。
 type entry struct {
-	name     string
-	category string        // 该消息归属的 actor 类别（接收节点据此按需创建/复活 actor）
-	reqType  reflect.Type // 请求结构体类型
-	resType  reflect.Type // 响应结构体类型；Send 无响应时为 nil
-	invoke   dispatchFunc
+	name      string
+	actorType actortype.ActorType
+	reqType   reflect.Type
+	resType   reflect.Type
+	invoke    dispatchFunc
 }
 
 var (
@@ -28,29 +28,26 @@ var (
 )
 
 // Register 注册异步内部消息（Cast，无回包）。
-// 路由键由请求消息类型反射得到（Protobuf 消息名），无需手工方法名；
-// category 为归属的 actor 类别（如 "room"）；A 为 actor 具体类型，T 为消息类型。
-func Register[A any, T proto.Message](category string, h func(ctx *HandlerContext[A], req T) error) {
+// 路由键由请求消息类型反射得到（消息名）；actorType 为归属的 actor 类型。
+func Register[A any, T proto.Message](actorType actortype.ActorType, h func(ctx *HandlerContext[A], req T) error) {
 	var zero T
-	add(category, reflect.TypeOf(zero).Elem(), nil, func(actor any, comm Comm, from string, payload interface{}) (interface{}, error) {
+	add(actorType, reflect.TypeOf(zero).Elem(), nil, func(actor any, comm Comm, from string, payload interface{}) (interface{}, error) {
 		hctx := &HandlerContext[A]{Actor: actor.(A), Comm: comm, from: from}
 		return nil, h(hctx, payload.(T))
 	})
 }
 
-// RegisterCall 注册同步内部消息（Call，带回包）。
-// 路由键由请求消息类型反射得到（Protobuf 消息名）；category 为归属的 actor 类别；
-// R 为响应类型。
-func RegisterCall[A any, T proto.Message, R proto.Message](category string, h func(ctx *HandlerContext[A], req T) (R, error)) {
+// RegisterCall 注册同步内部消息（Call，带回包）；路由键同样来自请求消息名。
+func RegisterCall[A any, T proto.Message, R proto.Message](actorType actortype.ActorType, h func(ctx *HandlerContext[A], req T) (R, error)) {
 	var zeroReq T
 	var zeroRes R
-	add(category, reflect.TypeOf(zeroReq).Elem(), reflect.TypeOf(zeroRes).Elem(), func(actor any, comm Comm, from string, payload interface{}) (interface{}, error) {
+	add(actorType, reflect.TypeOf(zeroReq).Elem(), reflect.TypeOf(zeroRes).Elem(), func(actor any, comm Comm, from string, payload interface{}) (interface{}, error) {
 		hctx := &HandlerContext[A]{Actor: actor.(A), Comm: comm, from: from}
 		return h(hctx, payload.(T))
 	})
 }
 
-func add(category string, reqType, resType reflect.Type, invoke dispatchFunc) {
+func add(actorType actortype.ActorType, reqType, resType reflect.Type, invoke dispatchFunc) {
 	name := reqType.Name()
 	if name == "" {
 		panic(fmt.Sprintf("rpc: empty message name: %v", reqType))
@@ -58,14 +55,13 @@ func add(category string, reqType, resType reflect.Type, invoke dispatchFunc) {
 	if _, ok := byName[name]; ok {
 		panic(fmt.Sprintf("rpc: duplicate message name: %s", name))
 	}
-	e := &entry{name: name, category: category, reqType: reqType, resType: resType, invoke: invoke}
+	e := &entry{name: name, actorType: actorType, reqType: reqType, resType: resType, invoke: invoke}
 	byName[name] = e
 	// 分发按消息指针类型索引（reflect.TypeOf(payload) 得到的是 *pt.X）
 	byType[reflect.PtrTo(reqType)] = e
 }
 
-// Dispatch 本地分发：按 payload 的具体类型查找 handler 并执行。
-// 返回 handled=false 表示该类型未注册，由调用方（core）回退到 actor 的 HandleMessage。
+// Dispatch 本地分发：按 payload 具体类型查表；未注册时返回 handled=false，由 core 回退。
 func Dispatch(actor any, comm Comm, from string, payload interface{}) (handled bool, result interface{}, err error) {
 	e, ok := byType[reflect.TypeOf(payload)]
 	if !ok {

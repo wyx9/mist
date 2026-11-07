@@ -79,8 +79,7 @@ func NewServer() *Server {
 // Instance 返回全局 Server 单例。未初始化时返回 nil。
 func Instance() *Server { return instance }
 
-// Start 启动 Game 服务。按依赖顺序初始化所有组件。
-// opts 字段留空时行为与原有逻辑完全一致（自动探测配置、无覆盖）。
+// Start 启动 Game 服务：按依赖顺序初始化各组件；opts 留空时自动探测配置、无覆盖。
 func (s *Server) Start(opts StartOptions) error {
 	// Phase 1: 配置 + 日志
 	cfgPath := opts.ConfigPath
@@ -141,7 +140,7 @@ func (s *Server) Start(opts StartOptions) error {
 	s.persist = persistMgr
 
 	// 注册 player 工厂：按需启动/复活玩家 actor 时使用（持久化句柄来自 persist 管理器）
-	if err := s.ActorManner.RegisterFactory("player", s.newPlayerActor); err != nil {
+	if err := s.ActorManner.RegisterFactory(actor.ActorTypePlayer, s.newPlayerActor); err != nil {
 		return fmt.Errorf("register player factory: %w", err)
 	}
 
@@ -270,11 +269,11 @@ func (s *Server) gameHeartbeat() {
 }
 
 // onActorFault actor 故障回调（handler 超时等）：异步踢掉该玩家的隧道连接。
-func (s *Server) onActorFault(name string) {
-	go s.kickFaultedTunnel(name)
+func (s *Server) onActorFault(uid int64) {
+	go s.kickFaultedTunnel(uid)
 }
 
 // newPlayerActor player 工厂：按需启动/复活玩家 actor 时创建实例并注入持久化句柄。
 func (s *Server) newPlayerActor(uid int64) (core.IActor, error) {
-	return actor.NewPlayer(s.ActorManner, uid, s.persist.HandleFor("player")), nil
+	return actor.NewPlayer(s.ActorManner, uid, s.persist.HandleFor(string(actor.ActorTypePlayer))), nil
 }
