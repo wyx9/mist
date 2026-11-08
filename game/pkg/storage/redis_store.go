@@ -76,3 +76,8 @@ func (s *RedisStore) Delete(ctx context.Context, key string, category string, ac
 func (s *RedisStore) Put(ctx context.Context, key string, raw []byte) error {
 	return s.rdb.Set(ctx, key, raw, 0).Err()
 }
+
+// DeleteOnly 只删除 Redis key，不登记 MySQL 脏集合（Redis-only 策略）。
+func (s *RedisStore) DeleteOnly(ctx context.Context, key string) error {
+	return s.rdb.Del(ctx, key).Err()
+}

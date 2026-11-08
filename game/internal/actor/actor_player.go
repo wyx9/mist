@@ -15,24 +15,22 @@ import (
 
 // Player 玩家业务 Actor，实现 core.IActor / core.Persistable / core.MessageHandler / core.IdleTimeoutProvider。
 type Player struct {
-	name       string             // 玩家名（仅展示；uid 才是身份，加载/登录时同步）
+	name       string             // 玩家名
 	uid        int64              // 玩家全局唯一 id（持久化主键，来自账号体系）
 	ip         string             // 玩家 IP 地址
 	conn       network.NetConn    // 网络连接（协议无关；休眠时为空，重连经 ConnAttached 换绑）
-	store      core.PersistStore  // 持久化落地句柄（由 gameserver 创建时注入）
 	mgr        *core.AManager     // 框架句柄：Stop 时向常驻 Room actor 投递离开通知
 	timer      core.TimerHandle   // actor 内部定时器句柄（消息式，框架注入）
-	dirty      bool               // 脏标记：数据变更后置位，持久化 tick 落地
+	persist    core.PersistHandle // 立即落地句柄（框架注入）：数据变更后调 MarkDirty
 	PlayerData *entity.PlayerData // 玩家数据
 }
 
 // NewPlayer 构造玩家 actor（uid 为身份；name 由 Start 加载持久化或登录路径 SetName 补齐）。
 // 连接不在创建时注入：由握手完成 Attach 后经 ConnAttached 消息换绑，保证 actor 串行。
-func NewPlayer(am *core.AManager, uid int64, store core.PersistStore) *Player {
+func NewPlayer(am *core.AManager, uid int64) *Player {
 	return &Player{
-		uid:   uid,
-		store: store,
-		mgr:   am,
+		uid: uid,
+		mgr: am,
 		PlayerData: &entity.PlayerData{
 			UID:         uid,
 			LastLoginAt: time.Now().Unix(),
@@ -46,20 +44,17 @@ func (p *Player) SetName(name string) {
 	p.PlayerData.Name = name
 }
 
-// Start 玩家 Actor 启动时加载数据（Redis -> MySQL -> 默认值）。
-func (p *Player) Start() {
-	p.loadPlayer()
-
+// Start 玩家 Actor 启动：持久化数据已由框架在 Start 之前加载。
+func (p *Player) Start() error {
 	p.GetTimer().After(3*time.Second, timerTest{})
-
+	return nil
 }
 
 // Type 返回 Actor 类型标识。
 func (p *Player) Type() actortype.ActorType { return ActorTypePlayer }
 
-// Stop 玩家 Actor 停止时同步落地兜底，并通知常驻 Room actor 移除自己。
+// Stop 玩家 Actor 停止：数据已由框架落地，这里只通知常驻 Room 移除自己。
 func (p *Player) Stop() {
-	p.flushNow()
 	p.notifyRoomLeave()
 }
 
@@ -87,8 +82,8 @@ func (p *Player) PersistTable() string { return "player_data" }
 // PersistDBName 返回 MySQL 库名，空串表示使用配置默认库。
 func (p *Player) PersistDBName() string { return "" }
 
-// SetPersistStore 创建阶段注入，须在 Start 之前完成。
-func (p *Player) SetPersistStore(s core.PersistStore) { p.store = s }
+// SetPersistHandle 创建阶段注入立即落地句柄（须在 Start 之前）。
+func (p *Player) SetPersistHandle(h core.PersistHandle) { p.persist = h }
 
 // SetTimerHandle 实现 core.SetTimerHandle：创建阶段注入 actor 内部定时器句柄。
 func (p *Player) SetTimerHandle(h core.TimerHandle) { p.timer = h }
@@ -99,16 +94,18 @@ func (p *Player) GetTimer() core.TimerHandle {
 
 type timerTest struct{}
 
-// MarkDirty 标记玩家数据已变更，等待下一个持久化 tick 落地。
-func (p *Player) MarkDirty() { p.dirty = true }
+// MarkDirty 标记玩家数据已变更，触发一次立即落地。
+func (p *Player) MarkDirty() {
+	if p.persist != nil {
+		p.persist.MarkDirty()
+	}
+}
 
-// HandleMessage 处理内部消息：PersistTick 按脏标记落地；ConnDetached/ConnAttached 维护连接引用。
+// HandleMessage 处理内部消息：ConnDetached/ConnAttached 维护连接引用。
 func (p *Player) HandleMessage(ctx *core.ActorContext, msg interface{}) {
 	switch m := msg.(type) {
 	case timerTest:
 		logger.INFO("player timer test")
-	case core.PersistTick:
-		p.flushIfDirty()
 	case core.ConnDetached:
 		p.conn = nil
 		logger.INFO("player conn detached, actor sleeping, name:", p.name)
@@ -124,47 +121,6 @@ func (p *Player) HandleMessage(ctx *core.ActorContext, msg interface{}) {
 		p.ip = conn.RemoteAddr()
 		logger.INFO("player conn attached, name:", p.name)
 	}
-}
-
-// loadPlayer 通过持久化句柄加载玩家数据；双 miss 时使用默认结构并标记脏以便首次落地。
-func (p *Player) loadPlayer() {
-	if p.store == nil {
-		logger.WARNING("player persist handle not set, skip load:", p.name)
-		return
-	}
-	found, err := p.store.Load(p.uid, p.PlayerData)
-	if err != nil {
-		logger.ERROR("player load failed:", err, "uid:", p.uid)
-		return
-	}
-	if !found {
-		p.dirty = true
-		logger.INFO("player no persisted data, use default, uid:", p.uid)
-		return
-	}
-	p.name = p.PlayerData.Name // 同步展示名
-	logger.INFO("player data loaded, uid:", p.uid)
-}
-
-// flushNow 无条件落地玩家数据（actor 退出/停机兜底）。
-func (p *Player) flushNow() {
-	if p.store == nil {
-		logger.WARNING("player persist handle not set, skip flush:", p.name)
-		return
-	}
-	if err := p.store.Save(p.uid, p.PlayerData); err != nil {
-		logger.ERROR("player persist failed:", err, "name:", p.name)
-		return
-	}
-	p.dirty = false
-}
-
-// flushIfDirty 仅当脏标记置位时落地（定时 tick 路径）。
-func (p *Player) flushIfDirty() {
-	if !p.dirty {
-		return
-	}
-	p.flushNow()
 }
 
 // notifyRoomLeave 玩家 actor 关闭时通知常驻 Room actor 移除自己。

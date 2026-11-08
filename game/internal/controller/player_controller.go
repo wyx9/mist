@@ -19,6 +19,7 @@ func LoginController(ctx *route.HandlerContext[*actor.Player], req *pt.LoginReq)
 	playerData := ctx.Actor.PlayerData
 	playerData.IsLogin = true
 	playerData.LastLoginAt = time.Now().Unix()
+	ctx.Actor.MarkDirty()
 
 	// 通知常驻 Room actor 记录玩家加入（测试跨 actor 异步通信）
 	if err := ctx.Comm.Cast(actor.RoomUID, &pt.RoomPlayerJoin{

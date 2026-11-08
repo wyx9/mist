@@ -8,34 +8,55 @@ import (
 	"simple_game/game/pkg/logger"
 )
 
-// loop Actor 主循环：单协程串行处理消息（对齐 skynet service 单 worker 模型）。
-// request 通道永不关闭，投递方监听 stop 通道避免关闭竞态。
-func (ac *ActorBase) loop() {
-	// 调用 Actor 的启动函数
-	ac.iActor.Start()
-	go func() {
-		defer func() {
-			ac.iActor.Stop()
+// start 执行启动初始化：先加载持久化数据，再调用 Start；任一步失败或 panic
+// 都终止启动并进入关闭态（对齐 skynet service bootstrap 失败即退出）。
+func (ac *ActorBase) start() (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.ERROR("actor start panic:", r, "uid:", ac.id)
+			err = fmt.Errorf("actor start panic: %v", r)
 			ac.setState(StateClosed)
 			close(ac.stop)
-		}()
-		for {
-			select {
-			case <-ac.ctx.Done(): // 上下文取消时退出
-				logger.INFO("Actor context canceled, uid:", ac.id)
-				return
-
-			case raw := <-ac.request: // 处理消息信封（同步串行）
-				env, ok := raw.(*Envelope)
-				if !ok {
-					logger.ERROR("unexpected message type in actor queue:", raw)
-					continue
-				}
-				ac.handleEnvelope(env)
-			}
 		}
-
 	}()
+	if err := ac.loadData(); err != nil {
+		ac.setState(StateClosed)
+		close(ac.stop)
+		return err
+	}
+	if err := ac.iActor.Start(); err != nil {
+		ac.setState(StateClosed)
+		close(ac.stop)
+		return err
+	}
+	go ac.runLoop()
+	return nil
+}
+
+// runLoop Actor 主循环：单协程串行处理消息（对齐 skynet service 单 worker 模型）。
+// request 通道永不关闭，投递方监听 stop 通道避免关闭竞态。
+func (ac *ActorBase) runLoop() {
+	defer func() {
+		ac.saveNow()
+		ac.iActor.Stop()
+		ac.setState(StateClosed)
+		close(ac.stop)
+	}()
+	for {
+		select {
+		case <-ac.ctx.Done(): // 上下文取消时退出
+			logger.INFO("Actor context canceled, uid:", ac.id)
+			return
+
+		case raw := <-ac.request: // 处理消息信封（同步串行）
+			env, ok := raw.(*Envelope)
+			if !ok {
+				logger.ERROR("unexpected message type in actor queue:", raw)
+				continue
+			}
+			ac.handleEnvelope(env)
+		}
+	}
 }
 
 // handleEnvelope 串行处理一条消息；handler 超时由看门狗兜底（置关闭、踢线），
@@ -79,8 +100,8 @@ func (ac *ActorBase) recoverHandler(ctx *ActorContext) {
 	}
 }
 
-// dispatch 按消息类型分发：MsgClient 走 clientHandler；MsgSend/MsgCall 优先走
-// rpc 注册表，未注册时回退到 actor 的 HandleMessage（框架生命周期消息）。
+// dispatch 按消息类型分发：MsgClient 走 clientHandler；PersistSave 由框架直接落盘；
+// 其余 MsgSend/MsgCall 优先走 rpc 注册表，未注册时回退到 actor 的 HandleMessage。
 func (ac *ActorBase) dispatch(env *Envelope, ctx *ActorContext) {
 	switch env.Kind {
 	case MsgClient:
@@ -90,6 +111,11 @@ func (ac *ActorBase) dispatch(env *Envelope, ctx *ActorContext) {
 			logger.WARNING("actor has no client handler, drop message:", ac.id)
 		}
 	case MsgSend:
+		// 落地消息提前处理
+		if _, ok := env.Payload.(PersistSave); ok {
+			ac.saveNow()
+			return
+		}
 		handled, _, herr := rpc.Dispatch(ac.iActor, ctx, env.From, env.Payload)
 		if handled {
 			if herr != nil {

@@ -31,6 +31,7 @@ type ActorBase struct {
 	lastActiveAt  atomic.Int64                             // 最近业务活动时间（unix nano），系统消息不刷新
 	sleepAt       atomic.Int64                             // 进入休眠的时间（unix nano），用于超时关闭判定
 	attached      atomic.Bool                              // 是否持有连接（玩家在线；内部 actor 恒为 false）
+	persistStore  PersistStore                             // 持久化后端；nil 表示不落地
 	idleTimeout   time.Duration                            // 空闲/休眠超时，Add 时从 IdleTimeoutProvider 缓存；0 表示永不自动关闭
 	ctx           context.Context                          // 上下文，用于控制 Actor 的生命周期
 	cancel        context.CancelFunc                       // 取消函数，用于取消上下文
@@ -77,6 +78,11 @@ func (ac *ActorBase) State() ActorState {
 // Attached 返回 Actor 是否持有连接。
 func (ac *ActorBase) Attached() bool {
 	return ac.attached.Load()
+}
+
+// Persistent 返回 actor 是否已绑定持久化后端。
+func (ac *ActorBase) Persistent() bool {
+	return ac.persistStore != nil
 }
 
 // isClosed 检查 Actor 是否已关闭。
@@ -150,20 +156,25 @@ func (ac *ActorBase) markAttached() bool {
 func uidKey(uid int64) string { return tool.ToString(uid) }
 
 // NewActorBase 创建新的 Actor 实例并启动主循环。uid 为全局唯一身份。
-func NewActorBase(uid int64, callBack IActor) *ActorBase {
+// persistStore 为空表示不持久化；Start 或加载失败时返回错误。
+func NewActorBase(uid int64, callBack IActor, persistStore PersistStore) (*ActorBase, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	ab := &ActorBase{
-		actorType: callBack.Type(),
-		id:        uid,
-		iActor:    callBack,
-		request:   make(chan interface{}, QueueSize),
-		stop:      make(chan struct{}),
-		ctx:       ctx,
-		cancel:    cancel,
+		actorType:    callBack.Type(),
+		id:           uid,
+		iActor:       callBack,
+		request:      make(chan interface{}, QueueSize),
+		stop:         make(chan struct{}),
+		ctx:          ctx,
+		cancel:       cancel,
+		persistStore: persistStore,
 	}
 
-	ab.loop() // 启动 Actor 的主循环
-	return ab
+	if err := ab.start(); err != nil {
+		cancel()
+		return nil, err
+	}
+	return ab, nil
 }
 
 // Shutdown 优雅关闭 Actor：先置关闭状态阻止新投递，再取消上下文并等待循环退出。

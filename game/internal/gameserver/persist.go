@@ -3,6 +3,7 @@ package gameserver
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"simple_game/game/internal/actor"
 	core "simple_game/game/internal/actor/core"
@@ -12,11 +13,12 @@ import (
 	"simple_game/game/pkg/storage"
 )
 
-// newPersistManager 构建持久化管理器：落地配置（表名/前缀/库名）由 actor 原型实现提供。
+// newPersistManager 构建持久化管理器：类别按约定派生表名/前缀，并注册为默认落地后端。
 func newPersistManager(cfg *GameConfig, am *core.AManager) (*persist.Manager, error) {
 	m, err := persist.NewManager(persist.Options{
-		AM:  am,
-		RDB: redis.RedisClient,
+		AM:            am,
+		RDB:           redis.RedisClient,
+		FlushInterval: time.Duration(cfg.Persist.FlushInterval) * time.Second,
 		OpenStore: func(dbName string) (storage.MysqlStore, error) {
 			// 默认库复用全局 mysql.DB（共享连接，不负责关闭）；
 			// 仅当 actor 指定了其他库名时才新开独立连接。
@@ -34,9 +36,9 @@ func newPersistManager(cfg *GameConfig, am *core.AManager) (*persist.Manager, er
 	if err != nil {
 		return nil, err
 	}
-	// 注册落地
-	if err := m.Register(&actor.Player{}); err != nil {
+	if err := m.RegisterCategory(string(actor.ActorTypePlayer)); err != nil {
 		return nil, err
 	}
+	am.SetPersistResolver(m)
 	return m, nil
 }

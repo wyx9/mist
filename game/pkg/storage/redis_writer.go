@@ -20,12 +20,15 @@ type RedisJob struct {
 	ActorID  int64
 	Raw      []byte // IsDelete=true 时忽略
 	IsDelete bool
+	NoSync   bool // true 表示只写/删 Redis，不登记 MySQL 脏集合
 }
 
 // redisWriterStore 字节级写入接口（RedisStore 实现，测试可注入 fake）。
 type redisWriterStore interface {
 	SaveRaw(ctx context.Context, key string, raw []byte, category string, actorID int64) error
 	Delete(ctx context.Context, key string, category string, actorID int64) error
+	Put(ctx context.Context, key string, raw []byte) error
+	DeleteOnly(ctx context.Context, key string) error
 }
 
 // RedisWriter 异步 Redis 写协程：消费 FIFO 队列完成网络 I/O。
@@ -135,9 +138,14 @@ func (w *RedisWriter) process(job RedisJob) {
 	backoff := w.retryBase
 	for {
 		var err error
-		if job.IsDelete {
+		switch {
+		case job.IsDelete && job.NoSync:
+			err = w.store.DeleteOnly(context.Background(), job.Key)
+		case job.IsDelete:
 			err = w.store.Delete(context.Background(), job.Key, job.Category, job.ActorID)
-		} else {
+		case job.NoSync:
+			err = w.store.Put(context.Background(), job.Key, job.Raw)
+		default:
 			err = w.store.SaveRaw(context.Background(), job.Key, job.Raw, job.Category, job.ActorID)
 		}
 		if err == nil {

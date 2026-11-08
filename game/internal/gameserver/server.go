@@ -125,7 +125,6 @@ func (s *Server) Start(opts StartOptions) error {
 	// Phase 3: 业务初始化
 	controller.RegisterAll()
 	actor.RegisterAll(s.ActorManner)
-	actor.StartDaemonActor(s.ActorManner)
 
 	// actor 故障（handler 超时）→ 异步踢掉该玩家连接
 	s.ActorManner.SetFaultHandler(s.onActorFault)
@@ -138,11 +137,6 @@ func (s *Server) Start(opts StartOptions) error {
 		return fmt.Errorf("start persistence: %w", err)
 	}
 	s.persist = persistMgr
-
-	// 注册 player 工厂：按需启动/复活玩家 actor 时使用（持久化句柄来自 persist 管理器）
-	if err := s.ActorManner.RegisterFactory(actor.ActorTypePlayer, s.newPlayerActor); err != nil {
-		return fmt.Errorf("register player factory: %w", err)
-	}
 
 	// Phase 4: 对外服务 (goroutine)
 	s.ctx, s.cancel = context.WithCancel(context.Background())
@@ -271,9 +265,4 @@ func (s *Server) gameHeartbeat() {
 // onActorFault actor 故障回调（handler 超时等）：异步踢掉该玩家的隧道连接。
 func (s *Server) onActorFault(uid int64) {
 	go s.kickFaultedTunnel(uid)
-}
-
-// newPlayerActor player 工厂：按需启动/复活玩家 actor 时创建实例并注入持久化句柄。
-func (s *Server) newPlayerActor(uid int64) (core.IActor, error) {
-	return actor.NewPlayer(s.ActorManner, uid, s.persist.HandleFor(string(actor.ActorTypePlayer))), nil
 }

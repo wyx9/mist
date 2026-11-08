@@ -15,9 +15,10 @@ type Room struct {
 	timer core.TimerHandle
 }
 
-func (r *Room) Start() {
+func (r *Room) Start() error {
 	r.Players = make(map[int64]string)
 	logger.INFO("room actor Start")
+	return nil
 }
 
 func (r *Room) Stop() {

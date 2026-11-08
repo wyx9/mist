@@ -18,8 +18,8 @@ import (
 // testActor 测试用 actor，实现 core.IActor。
 type testActor struct{}
 
-func (a *testActor) Start()                      {}
-func (a *testActor) Stop()                       {}
+func (a *testActor) Start() error              { return nil }
+func (a *testActor) Stop()                     {}
 func (a *testActor) Type() actortype.ActorType { return actortype.ActorType("test") }
 
 // tcpTransport 实现 rpc.Transport：把 RpcFrame 序列化字节经 4B 长度头写入 TCP。

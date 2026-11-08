@@ -32,6 +32,9 @@ type GameConfig struct {
 		PassWord string `yaml:"PassWord"`
 		DB       int    `yaml:"DB"`
 	} `yaml:"Redis"`
+	Persist struct {
+		FlushInterval int `yaml:"FlushInterval"` // actor -> Redis 落盘周期（秒），<=0 用默认 2s
+	} `yaml:"Persist"`
 }
 
 // StartOptions Start 的启动参数。字段留空时行为与原有逻辑完全一致（自动探测配置、无覆盖）。

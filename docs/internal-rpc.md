@@ -70,7 +70,7 @@ message RpcFrame {
 - `AManager.Cast/Call`：本地 `Find` 命中走本地；未命中**直接委托 `remoteRouter`**（跨进程），**不查询位置、不本地创建/复活**——寻址职责全部收敛到 gateway。
 - `EnsureRunning(uid, category)` 是**唯一启动入口**：类别解析（knownActors → `actor:init` → 兜底 category）只在此发生一次，`Deliver`/`SendLocal`/`CallLocal` 直接复用它（无 `resolveLocal` 中间层）。
 - 新增 `CallLocal/SendLocal(to, category, ...)`：**不带远程回退**，owner 节点入口（`rpc.Serve` 调用），防止环路；`category` 为兜底类别（本地无记录时按需创建/复活）。
-- `actor_loop.dispatch`：内部消息先走 `rpc.Dispatch`（注册表），未注册回退到 `actor.HandleMessage`（框架生命周期消息 `PersistTick/ConnDetached/ConnAttached`）。
+- `actor_loop.dispatch`：`PersistSave` 由框架直接拦截落地；其余内部消息先走 `rpc.Dispatch`（注册表），未注册回退到 `actor.HandleMessage`（连接生命周期消息 `ConnDetached/ConnAttached`）。
 - `Routable` 标记接口：可路由 actor（`Player`）创建时原子认领 `actor:loc:{uid}`；`Room`（每节点常驻）不实现。
 
 ### 4.3 gateway（路由 Agent）
@@ -96,7 +96,7 @@ message RpcFrame {
 | `EnsureRunning(uid, cat)` | **唯一启动入口**：Find 命中唤醒 / 未命中一次类别解析 + 工厂创建 + 位置原子认领 | **只允许 owner 节点调用**；认领失败返回 `ErrActorNotOwner` 且回滚无残留 |
 | `SendLocal / CallLocal` | owner 节点入口（`rpc.Serve` 调用） | 请求已到达 owner 节点，`EnsureRunning` 按需启动并投递 |
 | `Cast / Call` | 业务跨 actor 通信（消息出口） | 本地 `Find` 命中投递；未命中**直接发 gateway**（不查位置、不本地创建），由 gateway 寻址转发到 owner 节点 |
-| `SendSystem` | 系统消息（PersistTick/连接生命周期） | Find-only，不创建不复活 |
+| `SendSystem` | 系统消息（PersistSave/连接生命周期） | Find-only，不创建不复活 |
 | `EnsureDaemon(uid, cat)` | 常驻 actor（如 `RoomUID=-1`） | 跳过 uid 合法性校验，仅本地常驻、不参与路由 |
 
 跨节点顶替（重新登录落到新节点）：握手路径先 `Claim`（覆盖写接管位置），再 `EnsureRunning`；旧节点在 `Detach` 时检测到「位置已不属于自己」即关闭本地孤儿实例，避免双实例。

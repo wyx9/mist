@@ -10,12 +10,12 @@ import (
 
 // IActor Actor 基础接口：生命周期与类型标识。
 type IActor interface {
-	Start()                       // Actor 启动时的初始化
-	Stop()                        // Actor 停止时的清理
-	Type() actortype.ActorType    // Actor 类型标识: "player", "room" 等
+	Start() error              // Actor 启动初始化；返回错误则终止启动（不进入消息循环）
+	Stop()                     // Actor 停止时的清理
+	Type() actortype.ActorType // Actor 类型标识: "player", "room" 等
 }
 
-// ActorFactory 以 uid 创建某类 actor（展示名等由 Start 加载或调用方后续补齐）。
+// ActorFactory 以 uid 创建某类 actor（数据由框架加载，展示名等由调用方补齐）。
 type ActorFactory func(uid int64) (IActor, error)
 
 // MessageHandler 可选的内部消息处理器；未实现时异步消息丢弃，RPC 回 nil。
@@ -57,7 +57,7 @@ var (
 type ActorState int32
 
 const (
-	StateRunning  ActorState = iota
+	StateRunning ActorState = iota
 	StateSleeping
 	StateClosed
 )
@@ -73,7 +73,7 @@ const (
 
 // Envelope 消息信封：来源 + 内容 + RPC 回包通道。
 type Envelope struct {
-	From    string           // 客户端消息为 "server"，内部消息为发起方 actor uid
+	From    string // 客户端消息为 "server"，内部消息为发起方 actor uid
 	Kind    MsgKind
 	Payload interface{}
 	Reply   chan interface{} // 仅 MsgCall 使用

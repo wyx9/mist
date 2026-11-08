@@ -21,19 +21,20 @@ type categoryIndex struct {
 
 // AManager Actor 管理器：全局单例，负责所有 Actor 的存储、查找、消息投递与生命周期状态机。
 type AManager struct {
-	actorMap     sync.Map // uidKey → *ActorBase 主存储（运行中/休眠中）
-	knownActors  sync.Map // uidKey → actortype.ActorType（已初始化过，关闭后仍保留，供按需复活）
-	categories   sync.Map // actortype.ActorType → *categoryIndex
-	factories    sync.Map // actortype.ActorType → ActorFactory
-	mu           sync.RWMutex
-	createMu     sync.Mutex        // 串行化「工厂创建 + 启动」，避免同 uid 并发重复创建
-	sched        *timer.Scheduler  // actor 内部内存定时调度器（惰性创建）
-	faultHandler func(uid int64) // actor 故障回调（handler 超时等），由 gameserver 设置
-	remoteRouter rpc.RemoteRouter  // 跨进程路由（本地未命中时委托），由 gameserver 注入
-	sweeperCtx   context.Context
-	sweeperStop  context.CancelFunc
-	sweeperRun   bool
-	addr         string
+	actorMap        sync.Map // uidKey → *ActorBase 主存储（运行中/休眠中）
+	knownActors     sync.Map // uidKey → actortype.ActorType（已初始化过，关闭后仍保留，供按需复活）
+	categories      sync.Map // actortype.ActorType → *categoryIndex
+	factories       sync.Map // actortype.ActorType → ActorFactory
+	mu              sync.RWMutex
+	createMu        sync.Mutex       // 串行化「工厂创建 + 启动」，避免同 uid 并发重复创建
+	sched           *timer.Scheduler // actor 内部内存定时调度器（惰性创建）
+	faultHandler    func(uid int64)  // actor 故障回调（handler 超时等），由 gameserver 设置
+	remoteRouter    rpc.RemoteRouter // 跨进程路由（本地未命中时委托），由 gameserver 注入
+	persistResolver PersistResolver  // 持久化后端解析器，由 persist.Manager 注入
+	sweeperCtx      context.Context
+	sweeperStop     context.CancelFunc
+	sweeperRun      bool
+	addr            string
 }
 
 // SetFaultHandler 注册 actor 故障回调（如 handler 超时），用于踢掉故障玩家的连接。
@@ -65,6 +66,20 @@ func (am *AManager) remoteRouterSnapshot() rpc.RemoteRouter {
 	am.mu.RLock()
 	defer am.mu.RUnlock()
 	return am.remoteRouter
+}
+
+// SetPersistResolver 注册持久化后端解析器（由 persist.Manager 在启动时注入）。
+func (am *AManager) SetPersistResolver(r PersistResolver) {
+	am.mu.Lock()
+	defer am.mu.Unlock()
+	am.persistResolver = r
+}
+
+// persistResolverSnapshot 读取持久化解析器引用快照。
+func (am *AManager) persistResolverSnapshot() PersistResolver {
+	am.mu.RLock()
+	defer am.mu.RUnlock()
+	return am.persistResolver
 }
 
 // SetAddr 设置本节点注册地址，供位置注册/认领使用；须在启动任何 actor 前设置。
@@ -174,32 +189,13 @@ func (am *AManager) sweepActor(ab *ActorBase) {
 	}
 }
 
-// RegisterCategory 注册 Actor 类型。传入原型实例，通过 Type() 获取类型标识。
-func (am *AManager) RegisterCategory(prototype IActor) {
-	am.mu.Lock()
-	defer am.mu.Unlock()
-	actorType := prototype.Type()
-	if actorType == "" {
-		logger.ERROR("RegisterCategory: empty type from prototype")
-		return
-	}
-	if _, ok := am.categories.Load(actorType); ok {
-		logger.ERROR("category already registered:", actorType)
-		return
-	}
-	am.categories.Store(actorType, &categoryIndex{})
-}
-
-// addToCategories 将 actor 按 Type() 写入对应类型索引。
+// addToCategories 将 actor 按 Type() 写入对应类型索引（索引桶惰性创建）。
 func (am *AManager) addToCategories(ab *ActorBase) {
 	actorType := ab.Type()
 	if actorType == "" {
 		return
 	}
-	value, ok := am.categories.Load(actorType)
-	if !ok {
-		return
-	}
+	value, _ := am.categories.LoadOrStore(actorType, &categoryIndex{})
 	ci := value.(*categoryIndex)
 	ci.actors.Store(uidKey(ab.id), ab)
 }
@@ -218,7 +214,7 @@ func (am *AManager) removeFromCategories(ab *ActorBase) {
 	ci.actors.Delete(uidKey(ab.id))
 }
 
-// Add 添加 Actor 到管理器：缓存空闲超时并刷新活动时间，自动按已注册类别建立索引。
+// Add 添加 Actor 到管理器：缓存空闲超时并刷新活动时间，自动按类型建立索引。
 // 可路由 actor 创建时原子认领位置：已被他节点占有时回滚刚创建的实例并返回错误。
 func (am *AManager) Add(ab *ActorBase) error {
 	ab.manager = am // 注入管理器引用，供 handler 内部 RPC 使用
@@ -399,20 +395,27 @@ func (am *AManager) startByFactory(uid int64, actorType actortype.ActorType) (*A
 	return am.startNew(uid, actorType, actor)
 }
 
-// startNew 创建并启动 actor：记录初始化（内存 + Redis）、注入定时器句柄、注册到管理器。
+// startNew 创建并启动 actor：记录初始化（内存 + Redis）、注入句柄、注册到管理器。
 func (am *AManager) startNew(uid int64, actorType actortype.ActorType, actor IActor) (*ActorBase, error) {
 	key := uidKey(uid)
 	am.knownActors.Store(key, actorType)
 	if err := am.RegisterInit(uid, actorType); err != nil {
 		logger.ERROR("register actor init failed:", err, "uid:", uid)
 	}
-	// 定时器句柄须在 NewActorBase（触发 Start）之前注入，保证 Start 内也能排定时器。
+	// 句柄须在 NewActorBase（触发加载与 Start）之前注入。
 	if p, ok := actor.(SetTimerHandle); ok {
 		p.SetTimerHandle(am.newTimerHandle(uid))
 	}
-	ab := NewActorBase(uid, actor)
-	if ab == nil {
-		return nil, fmt.Errorf("create actor base failed: %s", key)
+	persistStore := am.resolvePersistStore(actorType, actor)
+	if persistStore != nil {
+		if p, ok := actor.(SetPersistHandle); ok {
+			p.SetPersistHandle(am.newPersistHandle(uid))
+		}
+	}
+	ab, err := NewActorBase(uid, actor, persistStore)
+	if err != nil {
+		am.rollbackStart(uid, key)
+		return nil, fmt.Errorf("actor start failed (uid=%d): %w", uid, err)
 	}
 	ab.clientHandler = func(ctx *ActorContext, msg interface{}) {
 		HandleClientMsg(actor, ctx, msg)
@@ -421,6 +424,45 @@ func (am *AManager) startNew(uid int64, actorType actortype.ActorType, actor IAc
 		return nil, err
 	}
 	return ab, nil
+}
+
+// rollbackStart 回滚启动前写入的初始化记录与已注入资源。
+func (am *AManager) rollbackStart(uid int64, key string) {
+	am.knownActors.Delete(key)
+	if err := am.UnregisterInit(uid); err != nil {
+		logger.ERROR("rollback actor init failed:", err, "uid:", uid)
+	}
+	am.cancelActorTimers(key)
+}
+
+// resolvePersistStore 按持久化解析器返回落地后端；nil 表示不持久化。
+func (am *AManager) resolvePersistStore(actorType actortype.ActorType, actor IActor) PersistStore {
+	if _, ok := actor.(Persistable); !ok {
+		return nil
+	}
+	r := am.persistResolverSnapshot()
+	if r == nil {
+		logger.WARNING("persist resolver not set, actor won't persist, category:", actorType)
+		return nil
+	}
+	return r.Resolve(string(actorType))
+}
+
+// persistHandle 绑定单个 actor 的立即落地句柄：MarkDirty 向 actor 自己投递 PersistSave。
+type persistHandle struct {
+	am  *AManager
+	uid int64
+}
+
+func (h *persistHandle) MarkDirty() {
+	if err := h.am.SendPersist(h.uid); err != nil {
+		logger.ERROR("persist mark dirty failed:", err, "uid:", h.uid)
+	}
+}
+
+// newPersistHandle 创建绑定指定 uid 的立即落地句柄。
+func (am *AManager) newPersistHandle(uid int64) PersistHandle {
+	return &persistHandle{am: am, uid: uid}
 }
 
 // timerHandle 绑定单个 actor 的定时器句柄：到期后向该 actor 自己投递消息。
@@ -607,7 +649,7 @@ func (am *AManager) SendLocal(to int64, actorType actortype.ActorType, from stri
 	return am.deliver(ab, &Envelope{From: from, Kind: MsgSend, Payload: msg})
 }
 
-// SendSystem 投递系统消息（PersistTick/连接生命周期），不刷新业务活动时间。
+// SendSystem 投递系统消息（连接生命周期等），不刷新业务活动时间。
 // 只投递本地已存在的实例（Find），系统消息不创建/复活 actor。
 func (am *AManager) SendSystem(to int64, from string, msg interface{}) error {
 	ab := am.Find(to)
@@ -615,6 +657,15 @@ func (am *AManager) SendSystem(to int64, from string, msg interface{}) error {
 		return ErrActorNotFound
 	}
 	return am.deliver(ab, &Envelope{From: from, Kind: MsgSend, Payload: msg, System: true})
+}
+
+// SendPersist 投递落盘消息（内部异步投递）：由 actor 主循环分发时直接执行 saveNow。
+func (am *AManager) SendPersist(to int64) error {
+	ab := am.Find(to)
+	if ab == nil {
+		return ErrActorNotFound
+	}
+	return am.deliver(ab, &Envelope{From: "persist", Kind: MsgSend, Payload: PersistSave{}, System: true})
 }
 
 // Call 同步调用：本地命中直接调用，否则交 remoteRouter（gateway）跨节点寻址。
