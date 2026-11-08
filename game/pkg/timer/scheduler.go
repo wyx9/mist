@@ -1,4 +1,4 @@
-// Package timer 定时器系统：actor 内部内存定时器（scheduler.go）与 Redis 全局持久化定时器（global.go）。
+// Package timer 定时器系统：actor 内部内存定时器（scheduler.go）与 Redis 全局持久化定时器（timer_task.go）。
 package timer
 
 import (
